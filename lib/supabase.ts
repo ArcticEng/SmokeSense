@@ -46,6 +46,7 @@ export interface TelemetryRow {
   severity: number;
   stage: string;
   is_smoke: boolean;
+  is_smouldering: boolean;
   scatter_delta: number;
   ir_blue_ratio: number;
   fwd_back_ratio: number;
