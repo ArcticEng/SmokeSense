@@ -205,7 +205,7 @@ export function useTelemetryHistory(deviceId: string | null, hours: number = 24)
 
     supabase
       .from("telemetry")
-      .select("id, device_id, severity, stage, is_smoke, scatter_delta, ir_blue_ratio, fwd_back_ratio, mq2, temperature, humidity, rssi, recorded_at")
+      .select("id, device_id, severity, stage, is_smoke, is_smouldering, scatter_delta, ir_blue_ratio, fwd_back_ratio, mq2, temperature, humidity, rssi, recorded_at")
       .eq("device_id", deviceId)
       .gte("recorded_at", since)
       .order("recorded_at", { ascending: true })
