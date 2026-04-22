@@ -1,0 +1,21 @@
+{
+  "name": "smokesense-mqtt-bridge",
+  "version": "1.0.0",
+  "description": "MQTT to Supabase bridge for SmokeSense fire detection system",
+  "type": "module",
+  "main": "mqtt_bridge.js",
+  "scripts": {
+    "start": "node mqtt_bridge.js",
+    "dev": "node --watch mqtt_bridge.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0",
+    "dotenv": "^16.4.0",
+    "mqtt": "^5.10.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "author": "Arctic Engineering",
+  "license": "UNLICENSED"
+}
