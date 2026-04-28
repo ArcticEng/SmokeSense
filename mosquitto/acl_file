@@ -1,0 +1,38 @@
+# SmokeSense MQTT Access Control List
+# Controls which users can publish/subscribe to which topics
+
+# Bridge service — can read everything, publish commands
+user bridge
+topic read smokesense/#
+topic write smokesense/#
+
+# DataGuard devices — can only publish their own telemetry
+user dataguard
+topic write smokesense/+/+/telemetry
+topic write smokesense/+/+/event
+topic write smokesense/+/+/status
+topic write smokesense/+/+/heartbeat
+topic read smokesense/+/+/cmd
+topic read smokesense/+/+/config
+
+# Node devices — same permissions as DataGuard
+user node
+topic write smokesense/+/+/telemetry
+topic write smokesense/+/+/event
+topic write smokesense/+/+/status
+topic write smokesense/+/+/heartbeat
+topic read smokesense/+/+/cmd
+topic read smokesense/+/+/config
+
+# Gateway devices
+user gateway
+topic write smokesense/+/+/telemetry
+topic write smokesense/+/+/event
+topic write smokesense/+/+/status
+topic write smokesense/+/+/heartbeat
+topic read smokesense/+/+/cmd
+topic read smokesense/+/+/config
+
+# Admin — full access (for debugging)
+user admin
+topic readwrite #

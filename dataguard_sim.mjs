@@ -4,7 +4,7 @@
 import mqtt from "mqtt";
 
 const DEVICE_ID = "DG-SIMULATOR";
-const ORG = "nvidia-dc-uk";
+const ORG = "demo";
 const BROKER = "mqtt://broker.hivemq.com:1883";
 const client = mqtt.connect(BROKER, { clientId: `dg-sim-${Date.now()}` });
 

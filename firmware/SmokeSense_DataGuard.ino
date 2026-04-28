@@ -1,6 +1,6 @@
 /*
  * SmokeSense DataGuard — Module-Based Zero-Solder Build
- * Arctic Engineering — v1.1.0 — April 2026
+ * Arctic Engineering — v1.2.0 — April 2026
  *
  * HARDWARE: ESP32 on screw terminal breakout
  *   Gas:   Alphasense H2-AF + CO-AF on ISB boards → ADS1115 (I2C)
@@ -31,6 +31,7 @@
 #include <ArduinoOTA.h>
 #include <FastLED.h>
 #include <Preferences.h>
+#include <LittleFS.h>
 #include <Adafruit_ADS1X15.h>
 #include <Adafruit_BME680.h>
 #include <Adafruit_MAX31865.h>
@@ -102,6 +103,95 @@ bool g_ads_ok = false, g_bme_ok = false, g_rtd_ok = false;
 
 static const char* STAGE_NAMES[] = {"normal","early_warning","pre_alarm","critical","emergency"};
 static const char* STAGE_LABELS[] = {"Normal","Early Warning","Pre-Alarm","Critical","EMERGENCY"};
+
+// ═══════════════════════════════════════════════════
+//  OFFLINE DATA BUFFER (LittleFS)
+//  Stores telemetry when MQTT is disconnected.
+//  Flushes to cloud when connection resumes.
+//  ~2MB flash = ~8 hours of readings at 2s intervals.
+// ═══════════════════════════════════════════════════
+
+#define BUFFER_DIR "/buf"
+#define BUFFER_MAX_FILES 2000
+#define BUFFER_FLUSH_BATCH 10
+
+bool g_littlefs_ok = false;
+uint32_t g_buffered_count = 0;
+uint32_t g_flushed_count = 0;
+
+void buffer_init() {
+    g_littlefs_ok = LittleFS.begin(true); // true = format on first use
+    if (g_littlefs_ok) {
+        if (!LittleFS.exists(BUFFER_DIR)) LittleFS.mkdir(BUFFER_DIR);
+        // Count existing buffered files
+        File dir = LittleFS.open(BUFFER_DIR);
+        if (dir && dir.isDirectory()) {
+            File f;
+            while ((f = dir.openNextFile())) { g_buffered_count++; f.close(); }
+        }
+        Serial.printf("[BUFFER] LittleFS ready. %u buffered readings pending.\n", g_buffered_count);
+    } else {
+        Serial.println("[BUFFER] LittleFS FAILED");
+    }
+}
+
+void buffer_store(const char* json) {
+    if (!g_littlefs_ok) return;
+    if (g_buffered_count >= BUFFER_MAX_FILES) {
+        // Delete oldest file to make room
+        File dir = LittleFS.open(BUFFER_DIR);
+        if (dir) {
+            File oldest = dir.openNextFile();
+            if (oldest) {
+                String path = String(BUFFER_DIR) + "/" + oldest.name();
+                oldest.close();
+                LittleFS.remove(path);
+                g_buffered_count--;
+            }
+        }
+    }
+    char fname[40];
+    snprintf(fname, sizeof(fname), "%s/%lu.json", BUFFER_DIR, millis());
+    File f = LittleFS.open(fname, "w");
+    if (f) {
+        f.print(json);
+        f.close();
+        g_buffered_count++;
+    }
+}
+
+void buffer_flush() {
+    if (!g_littlefs_ok || !mqtt.connected() || g_buffered_count == 0) return;
+
+    File dir = LittleFS.open(BUFFER_DIR);
+    if (!dir || !dir.isDirectory()) return;
+
+    uint32_t flushed = 0;
+    File f;
+    while ((f = dir.openNextFile()) && flushed < BUFFER_FLUSH_BATCH) {
+        String path = String(BUFFER_DIR) + "/" + f.name();
+        size_t len = f.size();
+        if (len > 0 && len < 1200) {
+            char buf[1200];
+            f.readBytes(buf, len);
+            buf[len] = 0;
+            f.close();
+            if (mqtt.publish(TOPIC_TELEMETRY, buf, false)) {
+                LittleFS.remove(path);
+                flushed++;
+                g_buffered_count--;
+                g_flushed_count++;
+            }
+        } else {
+            f.close();
+            LittleFS.remove(path); // corrupt or empty
+            g_buffered_count--;
+        }
+    }
+    if (flushed > 0) {
+        Serial.printf("[BUFFER] Flushed %u readings. %u remaining.\n", flushed, g_buffered_count);
+    }
+}
 
 // ═══════════════════════════════════════════════════
 //  SETUP
@@ -187,6 +277,7 @@ void setup() {
     setup_mqtt();
     setup_ota();
     setup_http();
+    buffer_init();
 
     // Startup sweep
     for (int i = 0; i < NUM_LEDS; i++) {
@@ -198,8 +289,8 @@ void setup() {
     FastLED.show();
 
     g_gas.last_rate_calc = millis();
-    Serial.printf("[BOOT] Device: %s | ADS:%s BME:%s RTD:%s\n",
-        g_device_id, g_ads_ok?"OK":"FAIL", g_bme_ok?"OK":"FAIL", g_rtd_ok?"OK":"FAIL");
+    Serial.printf("[BOOT] Device: %s | ADS:%s BME:%s RTD:%s BUF:%s\n",
+        g_device_id, g_ads_ok?"OK":"FAIL", g_bme_ok?"OK":"FAIL", g_rtd_ok?"OK":"FAIL", g_littlefs_ok?"OK":"FAIL");
 }
 
 // ═══════════════════════════════════════════════════
@@ -506,7 +597,7 @@ void update_outputs() {
 // ═══════════════════════════════════════════════════
 
 void publish_telemetry() {
-    if (!mqtt.connected()) return;
+    // Build JSON regardless of connection state
     JsonDocument d;
     d["dev"]=g_device_id; d["ts"]=millis(); d["fw"]=DG_FIRMWARE_VERSION;
     d["type"]="dataguard"; d["uptime"]=(millis()-g_boot_time)/1000;
@@ -559,9 +650,16 @@ void publish_telemetry() {
     bl["fwd"]=0;bl["back"]=0;bl["mq2"]=0;
 
     d["rssi"]=WiFi.RSSI(); d["heap"]=ESP.getFreeHeap();
+    d["buffered"]=g_buffered_count;
 
     char buf[1100]; serializeJson(d,buf);
-    if (mqtt.publish(TOPIC_TELEMETRY,buf,false)) g_msg_count++;
+
+    if (mqtt.connected()) {
+        if (mqtt.publish(TOPIC_TELEMETRY,buf,false)) g_msg_count++;
+    } else {
+        // MQTT disconnected — store to flash
+        buffer_store(buf);
+    }
 }
 
 void publish_event(uint8_t old_s, uint8_t new_s, const char* src) {
@@ -631,8 +729,13 @@ void loop() {
             g_supp.discharge_detected?" DISCHARGED":"",
             g_panel_alarm?" PANEL":"");
 
-        if (mqtt.connected()) publish_telemetry();
+        publish_telemetry(); // publishes to MQTT or buffers to LittleFS
         digitalWrite(PIN_STATUS, !digitalRead(PIN_STATUS));
+    }
+
+    // Flush offline buffer when MQTT reconnects
+    if (mqtt.connected() && g_buffered_count > 0) {
+        buffer_flush();
     }
 
     if (millis()-g_last_heartbeat >= 30000) {

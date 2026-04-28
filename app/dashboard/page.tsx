@@ -3,6 +3,7 @@ import { useState, useMemo } from "react";
 import { useAuth, useOrganization, useDevices, useLatestTelemetry, useEvents, useDeviceCommands, useTelemetryHistory, useAcknowledgeEvent } from "@/lib/hooks";
 import { STAGE_META, Device, EventRow, TelemetryRow } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip, Area, AreaChart } from "recharts";
 
 // ═══════════════════════════════════════════════════
@@ -57,6 +58,9 @@ export default function DashboardPage() {
           <p className="text-xs text-gray-500">{org?.name || "No organization"}</p>
         </div>
         <div className="flex items-center gap-4 text-sm">
+          <Link href="/dashboard/fleet" className="text-teal-400 hover:text-teal-300 text-xs font-medium">
+            Fleet Map
+          </Link>
           <span className="text-gray-500">
             <span className="text-green-400 font-medium">{onlineCount}</span>/{devices.length} online
           </span>

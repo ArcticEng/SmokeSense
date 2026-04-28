@@ -21,6 +21,7 @@
 import mqtt from "mqtt";
 import { createClient } from "@supabase/supabase-js";
 import dotenv from "dotenv";
+import { sendAlert, alertStatus } from "./alerts.js";
 
 dotenv.config();
 
@@ -264,8 +265,8 @@ async function handleEvent(deviceId, orgId, data) {
   await broadcastRealtime(orgId, deviceId, "event", row);
 
   // Push notification for escalations
-  if (data.type === "escalation" && (data.severity ?? 0) >= 3) {
-    await sendPushNotification(orgId, deviceId, data);
+  if (data.type === "escalation" && (data.severity ?? 0) >= 2) {
+    await sendAlert(supabase, orgId, deviceId, data);
   }
 }
 
@@ -504,6 +505,7 @@ function startHealthServer() {
           status: "ok",
           mqtt: mqttClient?.connected ?? false,
           stats,
+          alerts: alertStatus(),
           uptime: process.uptime(),
           buffer: telemetryBuffer.length,
         })
