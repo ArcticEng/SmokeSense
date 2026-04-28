@@ -5,9 +5,9 @@ import mqtt from "mqtt";
 
 const DEVICE_ID = "SS-SIMULATOR";
 const ORG = "demo";
-const BROKER = "mqtt://broker.hivemq.com:1883";
+const BROKER = "mqtt://switchback.proxy.rlwy.net:35720";
 
-const client = mqtt.connect(BROKER, { clientId: `sim-${Date.now()}` });
+const client = mqtt.connect(BROKER, { clientId: `sim-${Date.now()}`, username: "node", password: "SS_Node_Secret_2026!" });
 
 let severity = 0;
 let delta = 0;

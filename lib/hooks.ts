@@ -197,12 +197,9 @@ export function useTelemetryHistory(deviceId: string | null, hours: number = 24)
   const [data, setData] = useState<TelemetryRow[]>([]);
   const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
-    if (!deviceId) { setData([]); return; }
-
-    setLoading(true);
+  const fetchData = useCallback(() => {
+    if (!deviceId) return;
     const since = new Date(Date.now() - hours * 3600_000).toISOString();
-
     supabase
       .from("telemetry")
       .select("id, device_id, severity, stage, is_smoke, is_smouldering, scatter_delta, ir_blue_ratio, fwd_back_ratio, mq2, temperature, humidity, rssi, recorded_at")
@@ -215,6 +212,40 @@ export function useTelemetryHistory(deviceId: string | null, hours: number = 24)
         setLoading(false);
       });
   }, [deviceId, hours]);
+
+  // Initial fetch
+  useEffect(() => {
+    if (!deviceId) { setData([]); return; }
+    setLoading(true);
+    fetchData();
+  }, [deviceId, hours, fetchData]);
+
+  // Poll every 5 seconds for new data
+  useEffect(() => {
+    if (!deviceId) return;
+    const interval = setInterval(fetchData, 5000);
+    return () => clearInterval(interval);
+  }, [deviceId, fetchData]);
+
+  // Also listen for realtime inserts
+  useEffect(() => {
+    if (!deviceId) return;
+    const channel = supabase
+      .channel(`telem-history:${deviceId}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "telemetry", filter: `device_id=eq.${deviceId}` },
+        (payload) => {
+          setData((prev) => {
+            const updated = [...prev, payload.new as TelemetryRow];
+            // Keep only last 500 rows
+            return updated.length > 500 ? updated.slice(-500) : updated;
+          });
+        }
+      )
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [deviceId]);
 
   return { data, loading };
 }

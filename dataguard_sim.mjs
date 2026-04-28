@@ -5,8 +5,8 @@ import mqtt from "mqtt";
 
 const DEVICE_ID = "DG-SIMULATOR";
 const ORG = "demo";
-const BROKER = "mqtt://broker.hivemq.com:1883";
-const client = mqtt.connect(BROKER, { clientId: `dg-sim-${Date.now()}` });
+const BROKER = "mqtt://switchback.proxy.rlwy.net:35720";
+const client = mqtt.connect(BROKER, { clientId: `dg-sim-${Date.now()}`, username: "dataguard", password: "DG_Device_Secret_2026!" });
 
 let tick = 0;
 let h2 = 5, co = 2, voc = 50, temp = 22;
