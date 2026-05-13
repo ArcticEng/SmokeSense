@@ -10,8 +10,8 @@
 #pragma once
 
 // ─── WIFI ────────────────────────────────────────
-#define WIFI_SSID           "YourSiteWiFi"
-#define WIFI_PASS           "YourPassword"
+#define WIFI_SSID           "5G-unit116-dockroad-ftta"
+#define WIFI_PASS           "swifthamster79"
 #define WIFI_CONNECT_TIMEOUT 15000
 
 // Fallback AP — for local config / provisioning
