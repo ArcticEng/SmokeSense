@@ -5,10 +5,6 @@ import type { User, RealtimeChannel } from "@supabase/supabase-js";
 
 const supabase = createBrowserSupabase();
 
-// ═══════════════════════════════════════════════════
-//  AUTH
-// ═══════════════════════════════════════════════════
-
 export function useAuth() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
@@ -49,17 +45,12 @@ export function useAuth() {
   return { user, loading, signIn, signUp, signOut };
 }
 
-// ═══════════════════════════════════════════════════
-//  ORGANIZATION
-// ═══════════════════════════════════════════════════
-
 export function useOrganization() {
   const [org, setOrg] = useState<Organization | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function load() {
-      // Get user's first org (most users have one)
       const { data } = await supabase
         .from("org_members")
         .select("org_id, organizations(*)")
@@ -77,15 +68,10 @@ export function useOrganization() {
   return { org, loading };
 }
 
-// ═══════════════════════════════════════════════════
-//  DEVICES — with realtime updates
-// ═══════════════════════════════════════════════════
-
 export function useDevices(orgId: string | undefined) {
   const [devices, setDevices] = useState<Device[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Initial fetch
   useEffect(() => {
     if (!orgId) return;
 
@@ -102,7 +88,6 @@ export function useDevices(orgId: string | undefined) {
     load();
   }, [orgId]);
 
-  // Realtime subscription for device status changes
   useEffect(() => {
     if (!orgId) return;
 
@@ -110,27 +95,18 @@ export function useDevices(orgId: string | undefined) {
       .channel("devices-changes")
       .on(
         "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "devices",
-          filter: `org_id=eq.${orgId}`,
-        },
+        { event: "*", schema: "public", table: "devices", filter: `org_id=eq.${orgId}` },
         (payload) => {
           if (payload.eventType === "INSERT") {
             setDevices((prev) => [...prev, payload.new as Device]);
           } else if (payload.eventType === "UPDATE") {
             setDevices((prev) =>
               prev.map((d) =>
-                d.id === (payload.new as Device).id
-                  ? { ...d, ...(payload.new as Device) }
-                  : d
+                d.id === (payload.new as Device).id ? { ...d, ...(payload.new as Device) } : d
               )
             );
           } else if (payload.eventType === "DELETE") {
-            setDevices((prev) =>
-              prev.filter((d) => d.id !== (payload.old as any).id)
-            );
+            setDevices((prev) => prev.filter((d) => d.id !== (payload.old as any).id));
           }
         }
       )
@@ -139,7 +115,6 @@ export function useDevices(orgId: string | undefined) {
     return () => { supabase.removeChannel(channel); };
   }, [orgId]);
 
-  // Realtime broadcast from MQTT bridge (live telemetry)
   useEffect(() => {
     if (!orgId) return;
 
@@ -189,10 +164,6 @@ export function useDevices(orgId: string | undefined) {
   return { devices, loading };
 }
 
-// ═══════════════════════════════════════════════════
-//  TELEMETRY HISTORY
-// ═══════════════════════════════════════════════════
-
 export function useTelemetryHistory(deviceId: string | null, hours: number = 24) {
   const [data, setData] = useState<TelemetryRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -213,21 +184,18 @@ export function useTelemetryHistory(deviceId: string | null, hours: number = 24)
       });
   }, [deviceId, hours]);
 
-  // Initial fetch
   useEffect(() => {
     if (!deviceId) { setData([]); return; }
     setLoading(true);
     fetchData();
   }, [deviceId, hours, fetchData]);
 
-  // Poll every 5 seconds for new data
   useEffect(() => {
     if (!deviceId) return;
     const interval = setInterval(fetchData, 5000);
     return () => clearInterval(interval);
   }, [deviceId, fetchData]);
 
-  // Also listen for realtime inserts
   useEffect(() => {
     if (!deviceId) return;
     const channel = supabase
@@ -238,7 +206,6 @@ export function useTelemetryHistory(deviceId: string | null, hours: number = 24)
         (payload) => {
           setData((prev) => {
             const updated = [...prev, payload.new as TelemetryRow];
-            // Keep only last 500 rows
             return updated.length > 500 ? updated.slice(-500) : updated;
           });
         }
@@ -250,17 +217,11 @@ export function useTelemetryHistory(deviceId: string | null, hours: number = 24)
   return { data, loading };
 }
 
-// ═══════════════════════════════════════════════════
-//  LATEST TELEMETRY (single device, realtime)
-// ═══════════════════════════════════════════════════
-
 export function useLatestTelemetry(deviceId: string | null, orgId: string | undefined) {
   const [telemetry, setTelemetry] = useState<TelemetryRow | null>(null);
 
-  // Initial fetch
-  useEffect(() => {
+  const fetchLatest = useCallback(() => {
     if (!deviceId) return;
-
     supabase
       .from("telemetry")
       .select("*")
@@ -273,28 +234,20 @@ export function useLatestTelemetry(deviceId: string | null, orgId: string | unde
       });
   }, [deviceId]);
 
-  // Realtime updates via broadcast
   useEffect(() => {
-    if (!deviceId || !orgId) return;
+    if (!deviceId) return;
+    fetchLatest();
+  }, [deviceId, fetchLatest]);
 
-    const channel = supabase
-      .channel(`telem:${deviceId}`)
-      .on("broadcast", { event: "telemetry" }, ({ payload }) => {
-        if (payload?.device_id === deviceId) {
-          setTelemetry(payload as TelemetryRow);
-        }
-      })
-      .subscribe();
-
-    return () => { supabase.removeChannel(channel); };
-  }, [deviceId, orgId]);
+  // Poll every 3 seconds — ensures all fields (including VESDA, VOC) update live
+  useEffect(() => {
+    if (!deviceId) return;
+    const interval = setInterval(fetchLatest, 3000);
+    return () => clearInterval(interval);
+  }, [deviceId, fetchLatest]);
 
   return telemetry;
 }
-
-// ═══════════════════════════════════════════════════
-//  EVENTS
-// ═══════════════════════════════════════════════════
 
 export function useEvents(orgId: string | undefined, limit: number = 50) {
   const [events, setEvents] = useState<EventRow[]>([]);
@@ -315,7 +268,6 @@ export function useEvents(orgId: string | undefined, limit: number = 50) {
       });
   }, [orgId, limit]);
 
-  // Realtime: new events
   useEffect(() => {
     if (!orgId) return;
 
@@ -336,10 +288,6 @@ export function useEvents(orgId: string | undefined, limit: number = 50) {
   return { events, loading };
 }
 
-// ═══════════════════════════════════════════════════
-//  DEVICE COMMANDS (via API route)
-// ═══════════════════════════════════════════════════
-
 export function useDeviceCommands() {
   const sendCommand = useCallback(async (deviceId: string, command: string, params: Record<string, any> = {}) => {
     const res = await fetch(`/api/devices/${deviceId}/command`, {
@@ -359,10 +307,6 @@ export function useDeviceCommands() {
   return { sendCommand, silence, test, recalibrate, reboot, identify };
 }
 
-// ═══════════════════════════════════════════════════
-//  UPDATE DEVICE (rename, change zone)
-// ═══════════════════════════════════════════════════
-
 export function useUpdateDevice() {
   return useCallback(async (deviceId: string, fields: Partial<Pick<Device, "name" | "zone">>) => {
     const { error } = await supabase
@@ -372,10 +316,6 @@ export function useUpdateDevice() {
     return { error };
   }, []);
 }
-
-// ═══════════════════════════════════════════════════
-//  ACKNOWLEDGE EVENT
-// ═══════════════════════════════════════════════════
 
 export function useAcknowledgeEvent() {
   return useCallback(async (eventId: number, userId: string) => {
