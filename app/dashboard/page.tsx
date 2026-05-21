@@ -20,7 +20,6 @@ export default function DashboardPage() {
   const [filter, setFilter] = useState<"all" | "alarm" | "warning" | "offline">("all");
   const router = useRouter();
 
-  // Redirect if not authenticated
   if (!authLoading && !user) {
     router.replace("/login");
     return null;
@@ -51,7 +50,6 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen flex flex-col">
-      {/* Header */}
       <header className="border-b border-gray-800 px-5 py-3 flex items-center justify-between flex-shrink-0">
         <div>
           <h1 className="text-lg font-medium">SmokeSense</h1>
@@ -80,7 +78,6 @@ export default function DashboardPage() {
         </div>
       </header>
 
-      {/* Nav tabs */}
       <div className="border-b border-gray-800/50 px-5 py-2 flex items-center gap-6 flex-shrink-0">
         <div className="flex gap-1">
           {(["devices", "events"] as const).map((v) => (
@@ -113,11 +110,9 @@ export default function DashboardPage() {
         )}
       </div>
 
-      {/* Main content */}
       <div className="flex flex-1 min-h-0">
         {view === "devices" ? (
           <>
-            {/* Device list */}
             <div className="w-[340px] border-r border-gray-800 overflow-y-auto p-3 space-y-2 flex-shrink-0">
               {devLoading ? (
                 <p className="text-center text-gray-600 text-sm py-8">Loading devices...</p>
@@ -135,7 +130,6 @@ export default function DashboardPage() {
               )}
             </div>
 
-            {/* Detail panel */}
             <div className="flex-1 overflow-y-auto">
               {selectedDevice ? (
                 <DeviceDetail device={selectedDevice} orgId={org?.id} userId={user?.id} />
@@ -163,6 +157,7 @@ function DeviceCard({ device, selected, onClick }: { device: Device; selected: b
   const ago = device.last_seen
     ? Math.round((Date.now() - new Date(device.last_seen).getTime()) / 1000)
     : null;
+  const isDataGuard = device.device_id.startsWith("DG-");
 
   return (
     <button
@@ -180,6 +175,9 @@ function DeviceCard({ device, selected, onClick }: { device: Device; selected: b
             style={{ background: device.is_online ? s.color : "#555" }}
           />
           <span className="text-sm font-medium">{device.name}</span>
+          {isDataGuard && (
+            <span className="text-[9px] px-1.5 py-0.5 rounded bg-teal-950 text-teal-400 border border-teal-900">DG</span>
+          )}
         </div>
         <span
           className="text-[11px] px-2 py-0.5 rounded-md font-medium"
@@ -223,11 +221,13 @@ function DeviceDetail({ device, orgId, userId }: { device: Device; orgId?: strin
   const { silence, test, recalibrate, identify } = useDeviceCommands();
   const s = STAGE_META[Math.min(device.last_severity, 4)];
 
+  const isDataGuard = device.device_id.startsWith("DG-");
+
   const chartData = history.map((t) => ({
     time: new Date(t.recorded_at).toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit" }),
     delta: Math.round(t.scatter_delta),
-    mq2: t.mq2,
     temp: t.temperature,
+    humidity: t.humidity,
   }));
 
   return (
@@ -242,7 +242,10 @@ function DeviceDetail({ device, orgId, userId }: { device: Device; orgId?: strin
         </div>
         <div>
           <h2 className="text-base font-medium">{device.name}</h2>
-          <p className="text-xs text-gray-500">{device.device_id} — {device.zone || "Unassigned"}</p>
+          <p className="text-xs text-gray-500">
+            {device.device_id} — {device.zone || "Unassigned"}
+            {isDataGuard && <span className="ml-2 text-teal-500 font-medium">DataGuard</span>}
+          </p>
         </div>
       </div>
 
@@ -252,37 +255,151 @@ function DeviceDetail({ device, orgId, userId }: { device: Device; orgId?: strin
         style={{ background: s.bg, color: s.color, border: `1px solid ${s.border}` }}
       >
         {s.label}: {s.desc}
-        {telemetry?.is_smoke && (
+        {!isDataGuard && telemetry?.is_smoke && (
           <span className="ml-2 opacity-70">
             ({telemetry.is_smouldering ? "smouldering" : "flaming"})
           </span>
         )}
       </div>
 
-      {/* Stats grid */}
-      <div className="grid grid-cols-3 gap-2 mb-5">
-        <Stat label="Scatter delta" value={Math.round(telemetry?.scatter_delta || 0)} color={s.color} />
-        <Stat label="IR / Blue" value={(telemetry?.ir_blue_ratio || 0).toFixed(2)} color={(telemetry?.ir_blue_ratio || 0) > 1.2 ? "#ef4444" : "#22c55e"} />
-        <Stat label="Fwd / Back" value={(telemetry?.fwd_back_ratio || 0).toFixed(2)} />
-      </div>
-      <div className="grid grid-cols-4 gap-2 mb-5">
-        <Stat label="MQ-2" value={telemetry?.mq2 || device.baseline_mq2 || 0} unit="ppm" />
-        <Stat label="Temp" value={(telemetry?.temperature || 0).toFixed(1)} unit="°C" />
-        <Stat label="Humidity" value={Math.round(telemetry?.humidity || 0)} unit="%" />
-        <Stat label="WiFi" value={device.rssi || 0} unit="dBm" />
-      </div>
+      {isDataGuard ? (
+        <>
+          {/* DataGuard: Gas detection stats */}
+          <div className="grid grid-cols-3 gap-2 mb-3">
+            <Stat
+              label="H₂ delta"
+              value={Math.round(telemetry?.scatter_delta || 0)}
+              unit="ppm"
+              color={
+                (telemetry?.scatter_delta || 0) > 50
+                  ? "#ef4444"
+                  : (telemetry?.scatter_delta || 0) > 10
+                  ? "#f59e0b"
+                  : "#22c55e"
+              }
+            />
+            <Stat label="CO" value={(telemetry?.ir_blue_ratio || 0).toFixed(1)} unit="ppm" color="#22c55e" />
+            <Stat
+              label="VOC"
+              value={Math.round(telemetry?.mq2 || 0)}
+              unit="ppb"
+              color={
+                (telemetry?.mq2 || 0) > 500
+                  ? "#ef4444"
+                  : (telemetry?.mq2 || 0) > 200
+                  ? "#f59e0b"
+                  : "#22c55e"
+              }
+            />
+          </div>
+
+          {/* DataGuard: Environment + system stats */}
+          <div className="grid grid-cols-4 gap-2 mb-3">
+            <Stat label="Temp" value={(telemetry?.temperature || 0).toFixed(1)} unit="°C" />
+            <Stat label="Humidity" value={Math.round(telemetry?.humidity || 0)} unit="%" />
+            <Stat label="WiFi" value={device.rssi || 0} unit="dBm" />
+            <Stat label="Severity" value={device.last_severity} color={s.color} />
+          </div>
+
+          {/* DataGuard: VESDA + Suppression status */}
+          <div className="grid grid-cols-2 gap-2 mb-5">
+            <div className="bg-gray-900/40 rounded-xl px-4 py-3">
+              <div className="text-[11px] text-gray-500 mb-2">VESDA smoke level</div>
+              <div className="flex items-center gap-3">
+                <div className="flex-1 bg-gray-800 rounded-full h-2.5 overflow-hidden">
+                  <div
+                    className="h-full rounded-full transition-all duration-500"
+                    style={{
+                      width: `${Math.min(Math.round(telemetry?.fwd_back_ratio || 0), 100)}%`,
+                      background:
+                        (telemetry?.fwd_back_ratio || 0) > 60
+                          ? "#ef4444"
+                          : (telemetry?.fwd_back_ratio || 0) > 25
+                          ? "#f59e0b"
+                          : (telemetry?.fwd_back_ratio || 0) > 8
+                          ? "#eab308"
+                          : "#22c55e",
+                    }}
+                  />
+                </div>
+                <span className="text-sm font-semibold w-12 text-right">
+                  {Math.round(telemetry?.fwd_back_ratio || 0)}%
+                </span>
+              </div>
+            </div>
+            <div className="bg-gray-900/40 rounded-xl px-4 py-3">
+              <div className="text-[11px] text-gray-500 mb-2">Suppression system</div>
+              <div className="flex items-center gap-2">
+                <div
+                  className={`w-2.5 h-2.5 rounded-full ${
+                    device.last_severity >= 4 ? "bg-red-500 animate-pulse" : "bg-green-500"
+                  }`}
+                />
+                <span className="text-sm font-medium">
+                  {device.last_severity >= 4 ? "DISCHARGED" : "Armed — Ready"}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* DataGuard: Subsystem indicators */}
+          <div className="grid grid-cols-4 gap-2 mb-5">
+            {[
+              { label: "Gas Detection", icon: "H₂", status: (telemetry?.scatter_delta || 0) > 10 ? "alert" : "ok" },
+              { label: "VESDA", icon: "VA", status: (telemetry?.fwd_back_ratio || 0) > 8 ? "alert" : "ok" },
+              { label: "Suppression", icon: "SP", status: device.last_severity >= 4 ? "alert" : "ok" },
+              { label: "Fire Panel", icon: "FP", status: "ok" },
+            ].map((sub) => (
+              <div
+                key={sub.label}
+                className={`rounded-lg px-2 py-2 text-center border ${
+                  sub.status === "alert"
+                    ? "bg-red-950/50 border-red-900/50"
+                    : "bg-gray-900/40 border-gray-800/50"
+                }`}
+              >
+                <span
+                  className={`text-xs font-mono font-bold ${
+                    sub.status === "alert" ? "text-red-400" : "text-green-400"
+                  }`}
+                >
+                  {sub.icon}
+                </span>
+                <div className="text-[10px] text-gray-500 mt-0.5">{sub.label}</div>
+              </div>
+            ))}
+          </div>
+        </>
+      ) : (
+        <>
+          {/* Node: Original optical scatter stats */}
+          <div className="grid grid-cols-3 gap-2 mb-5">
+            <Stat label="Scatter delta" value={Math.round(telemetry?.scatter_delta || 0)} color={s.color} />
+            <Stat label="IR / Blue" value={(telemetry?.ir_blue_ratio || 0).toFixed(2)} color={(telemetry?.ir_blue_ratio || 0) > 1.2 ? "#ef4444" : "#22c55e"} />
+            <Stat label="Fwd / Back" value={(telemetry?.fwd_back_ratio || 0).toFixed(2)} />
+          </div>
+          <div className="grid grid-cols-4 gap-2 mb-5">
+            <Stat label="MQ-2" value={telemetry?.mq2 || device.baseline_mq2 || 0} unit="ppm" />
+            <Stat label="Temp" value={(telemetry?.temperature || 0).toFixed(1)} unit="°C" />
+            <Stat label="Humidity" value={Math.round(telemetry?.humidity || 0)} unit="%" />
+            <Stat label="WiFi" value={device.rssi || 0} unit="dBm" />
+          </div>
+        </>
+      )}
 
       {/* 24h chart */}
       {chartData.length > 0 && (
         <div className="mb-5">
-          <p className="text-xs text-gray-500 mb-2">24-hour scatter history</p>
+          <p className="text-xs text-gray-500 mb-2">
+            {isDataGuard ? "24-hour temperature history" : "24-hour scatter history"}
+          </p>
           <div className="bg-gray-900/50 rounded-xl p-3 border border-gray-800/50">
             <ResponsiveContainer width="100%" height={140}>
               <AreaChart data={chartData}>
                 <defs>
                   <linearGradient id="gDelta" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor={s.color} stopOpacity={0.3} />
-                    <stop offset="100%" stopColor={s.color} stopOpacity={0} />
+                    <stop offset="0%" stopColor={isDataGuard ? "#0d9488" : s.color} stopOpacity={0.3} />
+                    <stop offset="100%" stopColor={isDataGuard ? "#0d9488" : s.color} stopOpacity={0} />
                   </linearGradient>
                 </defs>
                 <XAxis dataKey="time" tick={{ fontSize: 10, fill: "#555" }} tickLine={false} axisLine={false} interval="preserveStartEnd" />
@@ -291,7 +408,14 @@ function DeviceDetail({ device, orgId, userId }: { device: Device; orgId?: strin
                   contentStyle={{ background: "#1c1e26", border: "1px solid #333", borderRadius: 8, fontSize: 12 }}
                   labelStyle={{ color: "#888" }}
                 />
-                <Area type="monotone" dataKey="delta" stroke={s.color} fill="url(#gDelta)" strokeWidth={1.5} dot={false} />
+                <Area
+                  type="monotone"
+                  dataKey={isDataGuard ? "temp" : "delta"}
+                  stroke={isDataGuard ? "#0d9488" : s.color}
+                  fill="url(#gDelta)"
+                  strokeWidth={1.5}
+                  dot={false}
+                />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -313,8 +437,10 @@ function DeviceDetail({ device, orgId, userId }: { device: Device; orgId?: strin
           </span>
         </div>
         <div className="bg-gray-900/40 rounded-lg px-3 py-2">
-          <span className="text-gray-500">Baseline: </span>
-          fwd={Math.round(device.baseline_fwd || 0)} mq2={Math.round(device.baseline_mq2 || 0)}
+          <span className="text-gray-500">{isDataGuard ? "Type: " : "Baseline: "}</span>
+          {isDataGuard
+            ? "DataGuard — Battery off-gas detection"
+            : `fwd=${Math.round(device.baseline_fwd || 0)} mq2=${Math.round(device.baseline_mq2 || 0)}`}
         </div>
       </div>
 
