@@ -29,7 +29,11 @@ dotenv.config();
 const CONFIG = {
   supabaseUrl: process.env.SUPABASE_URL,
   supabaseKey: process.env.SUPABASE_SERVICE_KEY,
-  mqttUrl: process.env.MQTT_BROKER_URL || "mqtt://broker.hivemq.com:1883",
+  // Fail closed: never silently use the public, unauthenticated broker in
+  // production. The dev fallback only applies outside NODE_ENV=production.
+  mqttUrl:
+    process.env.MQTT_BROKER_URL ||
+    (process.env.NODE_ENV === "production" ? "" : "mqtt://broker.hivemq.com:1883"),
   mqttUser: process.env.MQTT_USERNAME || "",
   mqttPass: process.env.MQTT_PASSWORD || "",
   topicPrefix: process.env.MQTT_TOPIC_PREFIX || "smokesense",
@@ -40,6 +44,12 @@ const CONFIG = {
 // ── Validate ────────────────────────────────────────
 if (!CONFIG.supabaseUrl || !CONFIG.supabaseKey) {
   console.error("FATAL: SUPABASE_URL and SUPABASE_SERVICE_KEY are required.");
+  process.exit(1);
+}
+if (!CONFIG.mqttUrl) {
+  console.error(
+    "FATAL: MQTT_BROKER_URL is required in production — refusing to fall back to the public broker."
+  );
   process.exit(1);
 }
 
@@ -95,6 +105,7 @@ function connectMqtt() {
       `${CONFIG.topicPrefix}/+/+/event`,
       `${CONFIG.topicPrefix}/+/+/status`,
       `${CONFIG.topicPrefix}/+/+/heartbeat`,
+      `${CONFIG.topicPrefix}/+/+/confstate`,
     ];
 
     topics.forEach((t) => {
@@ -157,6 +168,9 @@ async function handleMessage(topic, payload) {
       case "heartbeat":
         await handleHeartbeat(deviceId, orgId, data);
         break;
+      case "confstate":
+        await handleConfstate(deviceId, orgId, data);
+        break;
       default:
         log("debug", `Unknown channel: ${channel}`);
     }
@@ -187,11 +201,58 @@ async function handleTelemetry(deviceId, orgId, data) {
     pd_back_ir: data.raw?.bck_ir ?? 0,
     pd_back_blue: data.raw?.bck_blu ?? 0,
     mq2: data.raw?.mq2 ?? 0,
-    temperature: data.raw?.temp ?? 0,
-    humidity: data.raw?.hum ?? 0,
+    // Prefer the semantic env.* source; fall back to the legacy raw.* mirror.
+    temperature: data.env?.temp_rtd ?? data.raw?.temp ?? 0,
+    humidity: data.env?.humidity ?? data.raw?.hum ?? 0,
     baseline_fwd: data.baseline?.fwd ?? 0,
     baseline_back: data.baseline?.back ?? 0,
     baseline_mq2: data.baseline?.mq2 ?? 0,
+    // ── fire classifier (was previously dropped) ──
+    fire_type:      data.classifier?.fire_type  ?? null,
+    fire_label:     data.classifier?.fire_label ?? null,
+    confidence:     data.classifier?.confidence ?? 0,
+    action:         data.classifier?.action     ?? "monitor",
+    sensors_active: data.classifier?.sensors_active ?? 0,
+    confirmed:      data.classifier?.confirmed  ?? false,
+    // ── gas + smoke + particles (was previously dropped) ──
+    h2_ppm:    data.gas?.h2_ppm   ?? 0,
+    co_ppm:    data.gas?.co_ppm   ?? 0,
+    voc_ppb:   data.gas?.voc_ppb  ?? 0,
+    temp_rtd:  data.env?.temp_rtd ?? null,
+    vesda_pct: data.vesda?.smoke_pct ?? 0,
+    vesda_present: data.vesda?.present ?? null,
+    optical_pct:  data.chamber?.smoke_pct ?? null,
+    smoke_source: data.chamber?.source ?? null,
+    supp_pct:  data.suppression?.pressure_pct ?? null,
+    pm2_5:     data.particles?.pm2_5 ?? null,
+    pm_ratio:  data.particles?.ratio ?? null,
+    // ── suppression safety state (was previously dropped) ──
+    supp_pressure_bar: data.suppression?.pressure_bar ?? null,
+    supp_pressure_low: data.suppression?.pressure_low ?? null,
+    supp_discharged:   data.suppression?.discharged ?? null,
+    supp_door_open:    data.suppression?.door_open ?? null,
+    // ── alarm context (was previously dropped) ──
+    silenced:     data.silenced ?? false,
+    alarm_source: data.source ?? null,
+    panel_alarm:  data.panel_alarm ?? null,
+    // ── rate-of-rise (alarm-relevant, was previously dropped) ──
+    h2_rate:   data.gas?.h2_rate ?? null,
+    co_rate:   data.gas?.co_rate ?? null,
+    temp_rate: data.env?.temp_rate ?? null,
+    // ── classifier per-sensor scores + diagnostics (was previously dropped) ──
+    h2_score:         data.classifier?.h2_score ?? null,
+    co_score:         data.classifier?.co_score ?? null,
+    voc_score:        data.classifier?.voc_score ?? null,
+    temp_score:       data.classifier?.temp_score ?? null,
+    vesda_score:      data.classifier?.vesda_score ?? null,
+    action_label:     data.classifier?.action_label ?? null,
+    sensors_agreeing: data.classifier?.sensors_agreeing ?? null,
+    sustained_ms:     data.classifier?.sustained_ms ?? null,
+    // ── particle detail (was previously dropped) ──
+    pm1_0:               data.particles?.pm1_0 ?? null,
+    pm10:                data.particles?.pm10 ?? null,
+    particle_density:    data.particles?.density ?? null,
+    particle_fire_hint:  data.particles?.fire_hint ?? null,
     rssi: data.rssi ?? 0,
     heap: data.heap ?? 0,
     uptime_s: data.uptime ?? 0,
@@ -242,6 +303,13 @@ async function handleEvent(deviceId, orgId, data) {
     from_stage: data.from_stage,
     to_stage: data.to_stage,
     severity: data.severity ?? 0,
+    source: data.source ?? null,
+    fire_type: data.fire_type ?? null,
+    fire_label: data.fire_label ?? null,
+    confidence: data.confidence ?? 0,
+    action: data.action ?? null,
+    h2_ppm: data.h2_ppm ?? null,
+    co_ppm: data.co_ppm ?? null,
     scatter_delta: data.delta,
     ir_blue_ratio: data.ir_blue,
     is_smoke: data.is_smoke,
@@ -309,6 +377,30 @@ async function handleHeartbeat(deviceId, orgId, data) {
     firmware: data.fw,
     last_severity: data.sev ?? 0,
   });
+}
+
+// ═════════════════════════════════════════════════════
+//  CONFSTATE — device's reported runtime config (retained)
+// ═════════════════════════════════════════════════════
+
+async function handleConfstate(deviceId, orgId, data) {
+  const config = data.config ?? data;
+  const { error } = await supabase.from("device_config").upsert(
+    {
+      device_id: deviceId,
+      org_id: orgId,
+      config,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "device_id" }
+  );
+  if (error) {
+    log("error", `device_config upsert failed for ${deviceId}:`, error.message);
+    stats.errors++;
+  } else {
+    log("info", `CONFIG state stored for ${deviceId}`);
+  }
+  await broadcastRealtime(orgId, deviceId, "confstate", { device_id: deviceId, config });
 }
 
 // ═════════════════════════════════════════════════════
@@ -399,22 +491,36 @@ async function resolveOrgId(slug) {
 //  SUPABASE REALTIME BROADCAST
 // ═════════════════════════════════════════════════════
 
-async function broadcastRealtime(orgId, deviceId, type, payload) {
-  // Broadcast on org-scoped channel so only that org's dashboards receive it
-  const channelName = `org:${orgId}`;
+// Persistent subscribed channels per org. Broadcasting on an unsubscribed
+// channel silently drops messages, so we subscribe once and reuse.
+const realtimeChannels = new Map(); // orgId -> RealtimeChannel
 
+function getRealtimeChannel(orgId) {
+  if (realtimeChannels.has(orgId)) return realtimeChannels.get(orgId);
+  const channel = supabase.channel(`org:${orgId}`);
+  channel.subscribe((status) => {
+    if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+      realtimeChannels.delete(orgId);
+      try { supabase.removeChannel(channel); } catch (_) {}
+    }
+  });
+  realtimeChannels.set(orgId, channel);
+  return channel;
+}
+
+async function broadcastRealtime(orgId, deviceId, type, payload) {
+  if (!orgId) return;
+  // Broadcast on org-scoped channel so only that org's dashboards receive it
   try {
-    const channel = supabase.channel(channelName);
+    const channel = getRealtimeChannel(orgId);
     await channel.send({
       type: "broadcast",
       event: type,
       payload: { device_id: deviceId, ...payload },
     });
-    // Unsubscribe immediately — bridge is fire-and-forget
-    supabase.removeChannel(channel);
   } catch (err) {
     // Realtime broadcast failures are non-critical
-    log("debug", `Realtime broadcast failed for ${channelName}:`, err.message);
+    log("debug", `Realtime broadcast failed for org:${orgId}:`, err.message);
   }
 }
 
@@ -438,7 +544,7 @@ async function sendPushNotification(orgId, deviceId, eventData) {
   const zone = device?.zone || "";
 
   const severity = eventData.severity ?? 0;
-  const stageLabels = ["Clear", "Alert", "Action", "Fire 1", "FIRE 2"];
+  const stageLabels = ["Normal", "Early Warning", "Pre-Alarm", "Critical", "EMERGENCY"];
   const stageName = stageLabels[Math.min(severity, 4)];
 
   const title = severity >= 4

@@ -45,6 +45,25 @@ export interface TelemetryRow {
   device_id: string;
   severity: number;
   stage: string;
+  // fire classifier
+  fire_type?: string | null;
+  fire_label?: string | null;
+  confidence?: number;
+  action?: string | null;
+  sensors_active?: number;
+  confirmed?: boolean;
+  // gas + smoke + particles
+  h2_ppm?: number;
+  co_ppm?: number;
+  voc_ppb?: number;
+  vesda_pct?: number;
+  vesda_present?: boolean | null;
+  optical_pct?: number | null;
+  smoke_source?: string | null;
+  temp_rtd?: number | null;
+  supp_pct?: number | null;
+  pm2_5?: number | null;
+  pm_ratio?: number | null;
   is_smoke: boolean;
   is_smouldering: boolean;
   scatter_delta: number;
@@ -64,11 +83,23 @@ export interface EventRow {
   from_stage: string | null;
   to_stage: string | null;
   severity: number;
+  source?: string | null;
+  fire_type?: string | null;
+  fire_label?: string | null;
+  confidence?: number;
+  action?: string | null;
+  h2_ppm?: number | null;
+  co_ppm?: number | null;
   scatter_delta: number | null;
+  ir_blue_ratio?: number | null;
   is_smoke: boolean | null;
   temperature: number | null;
+  humidity?: number | null;
+  mq2?: number | null;
   payload: any;
   acknowledged: boolean;
+  acknowledged_by?: string | null;
+  acknowledged_at?: string | null;
   recorded_at: string;
 }
 
@@ -81,9 +112,9 @@ export interface Organization {
 }
 
 export const STAGE_META: Record<number, { key: AlarmStage; label: string; color: string; bg: string; border: string; desc: string }> = {
-  0: { key: "clear",  label: "Clear",  color: "#22c55e", bg: "#052e16", border: "#166534", desc: "Normal air quality" },
-  1: { key: "alert",  label: "Alert",  color: "#eab308", bg: "#422006", border: "#854d0e", desc: "Above normal — investigate" },
-  2: { key: "action", label: "Action", color: "#f97316", bg: "#431407", border: "#9a3412", desc: "Rising smoke — respond now" },
-  3: { key: "fire1",  label: "Fire 1", color: "#ef4444", bg: "#450a0a", border: "#991b1b", desc: "Pre-alarm — danger imminent" },
-  4: { key: "fire2",  label: "Fire 2", color: "#dc2626", bg: "#2a0000", border: "#dc2626", desc: "FIRE — evacuate immediately" },
+  0: { key: "clear",  label: "Monitor",   color: "#22c55e", bg: "#052e16", border: "#166534", desc: "Normal — monitoring" },
+  1: { key: "alert",  label: "Alert",     color: "#eab308", bg: "#422006", border: "#854d0e", desc: "Above normal — investigate" },
+  2: { key: "action", label: "Pre-Alarm", color: "#f97316", bg: "#431407", border: "#9a3412", desc: "Rising — prepare response" },
+  3: { key: "fire1",  label: "Critical",  color: "#ef4444", bg: "#450a0a", border: "#991b1b", desc: "Critical — activate suppression" },
+  4: { key: "fire2",  label: "Emergency", color: "#dc2626", bg: "#2a0000", border: "#dc2626", desc: "Emergency — evacuate immediately" },
 };

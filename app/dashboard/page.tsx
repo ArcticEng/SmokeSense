@@ -1,5 +1,5 @@
 "use client";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useAuth, useOrganization, useDevices, useLatestTelemetry, useEvents, useDeviceCommands, useTelemetryHistory, useAcknowledgeEvent } from "@/lib/hooks";
 import { STAGE_META, Device, EventRow, TelemetryRow } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
@@ -19,6 +19,11 @@ export default function DashboardPage() {
   const [view, setView] = useState<"devices" | "events">("devices");
   const [filter, setFilter] = useState<"all" | "alarm" | "warning" | "offline">("all");
   const router = useRouter();
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/admin/me").then((r) => r.json()).then((j) => setIsAdmin(!!j.is_superadmin)).catch(() => {});
+  }, []);
 
   if (!authLoading && !user) {
     router.replace("/login");
@@ -56,6 +61,11 @@ export default function DashboardPage() {
           <p className="text-xs text-gray-500">{org?.name || "No organization"}</p>
         </div>
         <div className="flex items-center gap-4 text-sm">
+          {isAdmin && (
+            <Link href="/dashboard/admin" className="text-amber-400 hover:text-amber-300 text-xs font-medium">
+              Admin
+            </Link>
+          )}
           <Link href="/dashboard/fleet" className="text-teal-400 hover:text-teal-300 text-xs font-medium">
             Fleet Map
           </Link>
@@ -264,29 +274,65 @@ function DeviceDetail({ device, orgId, userId }: { device: Device; orgId?: strin
 
       {isDataGuard ? (
         <>
+          {/* DataGuard: Fire classification */}
+          <div className="rounded-xl px-4 py-3 mb-3 bg-gray-900/40 border border-gray-800/50">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-[11px] text-gray-500 mb-0.5">Fire classification</div>
+                <div className="text-sm font-semibold">
+                  {telemetry?.fire_label || "Normal"}
+                  {telemetry?.confirmed && (
+                    <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-red-950 text-red-400 border border-red-900">CONFIRMED</span>
+                  )}
+                </div>
+              </div>
+              <div className="text-right">
+                <div className="text-[11px] text-gray-500 mb-0.5">Confidence</div>
+                <div className="text-lg font-semibold" style={{ color: s.color }}>
+                  {Math.round(telemetry?.confidence || 0)}%
+                </div>
+              </div>
+            </div>
+            <div className="mt-2 flex items-center gap-4 text-[11px] text-gray-500">
+              <span>Action: <span className="text-gray-300">{telemetry?.action || "monitor"}</span></span>
+              <span>Sensors agreeing: <span className="text-gray-300">{telemetry?.sensors_active ?? 0}</span></span>
+            </div>
+          </div>
+
           {/* DataGuard: Gas detection stats */}
           <div className="grid grid-cols-3 gap-2 mb-3">
             <Stat
-              label="H₂ delta"
-              value={Math.round(telemetry?.scatter_delta || 0)}
+              label="H₂"
+              value={(telemetry?.h2_ppm || 0).toFixed(1)}
               unit="ppm"
               color={
-                (telemetry?.scatter_delta || 0) > 50
+                (telemetry?.h2_ppm || 0) > 50
                   ? "#ef4444"
-                  : (telemetry?.scatter_delta || 0) > 10
+                  : (telemetry?.h2_ppm || 0) > 15
                   ? "#f59e0b"
                   : "#22c55e"
               }
             />
-            <Stat label="CO" value={(telemetry?.ir_blue_ratio || 0).toFixed(1)} unit="ppm" color="#22c55e" />
+            <Stat
+              label="CO"
+              value={(telemetry?.co_ppm || 0).toFixed(1)}
+              unit="ppm"
+              color={
+                (telemetry?.co_ppm || 0) > 35
+                  ? "#ef4444"
+                  : (telemetry?.co_ppm || 0) > 10
+                  ? "#f59e0b"
+                  : "#22c55e"
+              }
+            />
             <Stat
               label="VOC"
-              value={Math.round(telemetry?.mq2 || 0)}
+              value={Math.round(telemetry?.voc_ppb || 0)}
               unit="ppb"
               color={
-                (telemetry?.mq2 || 0) > 500
+                (telemetry?.voc_ppb || 0) > 500
                   ? "#ef4444"
-                  : (telemetry?.mq2 || 0) > 200
+                  : (telemetry?.voc_ppb || 0) > 200
                   ? "#f59e0b"
                   : "#22c55e"
               }
@@ -304,28 +350,37 @@ function DeviceDetail({ device, orgId, userId }: { device: Device; orgId?: strin
           {/* DataGuard: VESDA + Suppression status */}
           <div className="grid grid-cols-2 gap-2 mb-5">
             <div className="bg-gray-900/40 rounded-xl px-4 py-3">
-              <div className="text-[11px] text-gray-500 mb-2">VESDA smoke level</div>
-              <div className="flex items-center gap-3">
-                <div className="flex-1 bg-gray-800 rounded-full h-2.5 overflow-hidden">
-                  <div
-                    className="h-full rounded-full transition-all duration-500"
-                    style={{
-                      width: `${Math.min(Math.round(telemetry?.fwd_back_ratio || 0), 100)}%`,
-                      background:
-                        (telemetry?.fwd_back_ratio || 0) > 60
-                          ? "#ef4444"
-                          : (telemetry?.fwd_back_ratio || 0) > 25
-                          ? "#f59e0b"
-                          : (telemetry?.fwd_back_ratio || 0) > 8
-                          ? "#eab308"
-                          : "#22c55e",
-                    }}
-                  />
-                </div>
-                <span className="text-sm font-semibold w-12 text-right">
-                  {Math.round(telemetry?.fwd_back_ratio || 0)}%
-                </span>
-              </div>
+              {(() => {
+                const vesdaPresent = telemetry?.vesda_present !== false;
+                const smoke = vesdaPresent ? (telemetry?.vesda_pct || 0) : (telemetry?.optical_pct || 0);
+                const label = vesdaPresent ? "VESDA smoke level" : "Smoke level (chamber)";
+                return (
+                  <>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-[11px] text-gray-500">{label}</span>
+                      <span className="text-[10px] text-gray-600">
+                        {vesdaPresent ? "external" : `optical · ${telemetry?.smoke_source || "—"}`}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="flex-1 bg-gray-800 rounded-full h-2.5 overflow-hidden">
+                        <div
+                          className="h-full rounded-full transition-all duration-500"
+                          style={{
+                            width: `${Math.min(Math.round(smoke), 100)}%`,
+                            background:
+                              smoke > 60 ? "#ef4444"
+                              : smoke > 25 ? "#f59e0b"
+                              : smoke > 8 ? "#eab308"
+                              : "#22c55e",
+                          }}
+                        />
+                      </div>
+                      <span className="text-sm font-semibold w-12 text-right">{Math.round(smoke)}%</span>
+                    </div>
+                  </>
+                );
+              })()}
             </div>
             <div className="bg-gray-900/40 rounded-xl px-4 py-3">
               <div className="text-[11px] text-gray-500 mb-2">Suppression system</div>
@@ -345,8 +400,8 @@ function DeviceDetail({ device, orgId, userId }: { device: Device; orgId?: strin
           {/* DataGuard: Subsystem indicators */}
           <div className="grid grid-cols-4 gap-2 mb-5">
             {[
-              { label: "Gas Detection", icon: "H₂", status: (telemetry?.scatter_delta || 0) > 10 ? "alert" : "ok" },
-              { label: "VESDA", icon: "VA", status: (telemetry?.fwd_back_ratio || 0) > 8 ? "alert" : "ok" },
+              { label: "Gas Detection", icon: "H₂", status: (telemetry?.h2_ppm || 0) > 15 ? "alert" : "ok" },
+              { label: "Smoke", icon: "SM", status: Math.max(telemetry?.vesda_pct || 0, telemetry?.optical_pct || 0) > 8 ? "alert" : "ok" },
               { label: "Suppression", icon: "SP", status: device.last_severity >= 4 ? "alert" : "ok" },
               { label: "Fire Panel", icon: "FP", status: "ok" },
             ].map((sub) => (
@@ -369,6 +424,19 @@ function DeviceDetail({ device, orgId, userId }: { device: Device; orgId?: strin
               </div>
             ))}
           </div>
+
+          {/* DataGuard: Optical scatter chamber (ADPD4101) — shown when live */}
+          {(telemetry?.ir_blue_ratio ?? 0) > 0 && (
+            <div className="mb-5">
+              <p className="text-xs text-gray-500 mb-2">Optical scatter chamber</p>
+              <div className="grid grid-cols-4 gap-2">
+                <Stat label="Smoke %" value={Math.round(telemetry?.optical_pct || 0)} unit="%" color={s.color} />
+                <Stat label="Scatter delta" value={Math.round(telemetry?.scatter_delta || 0)} />
+                <Stat label="Blue / IR" value={(telemetry?.ir_blue_ratio || 0).toFixed(2)} color={(telemetry?.ir_blue_ratio || 0) > 1.6 ? "#ef4444" : "#22c55e"} />
+                <Stat label="Fwd / Back" value={(telemetry?.fwd_back_ratio || 0).toFixed(2)} />
+              </div>
+            </div>
+          )}
         </>
       ) : (
         <>
@@ -522,6 +590,9 @@ function EventLog({ events, userId }: { events: EventRow[]; userId: string }) {
                       <span className="text-gray-500 text-xs ml-2">
                         {ev.from_stage} → {ev.to_stage}
                       </span>
+                    )}
+                    {ev.fire_label && (
+                      <span className="text-gray-400 text-xs ml-2">· {ev.fire_label} ({Math.round(ev.confidence || 0)}%)</span>
                     )}
                   </div>
                   <div className="text-[11px] text-gray-600">{time}</div>

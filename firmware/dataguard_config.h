@@ -87,6 +87,13 @@
 #define VESDA_SHUNT          0.165
 #define SUPP_SHUNT           0.165
 
+// External VESDA / aspirating smoke detector present on PIN_VESDA?
+//   true  = monitor the external VESDA system as its own channel
+//   false = no VESDA; the optical chamber (or PMS5003) is the smoke source
+// Either way, the optical chamber still provides particle classification
+// and can independently escalate smoke.
+#define VESDA_PRESENT        true
+
 // ═══════════════════════════════════════════════════
 //  RELAY INPUTS (buttons for demo, opto-isolator for production)
 // ═══════════════════════════════════════════════════
@@ -149,6 +156,36 @@
 #define H2_RATE_CRITICAL     20.0
 #define CO_RATE_CRITICAL     10.0
 #define TEMP_RATE_CRITICAL   2.0
+
+// ═══════════════════════════════════════════════════
+//  PROTOTYPE MODE — set true when using pots instead of 4-20mA
+// ═══════════════════════════════════════════════════
+#define VESDA_USE_POT        true   // true = 10K pot, false = 4-20mA with shunt
+#define SUPP_USE_POT         true   // true = pot/wire, false = 4-20mA with shunt
+
+// ═══════════════════════════════════════════════════
+//  PARTICLE DETECTION (PMS5003 laser sensor)
+//  Replaces external VESDA when not available.
+//  Gives PM1.0, PM2.5, PM10 + 6 size bins.
+//  PM1/PM10 ratio distinguishes fire type.
+// ═══════════════════════════════════════════════════
+#define PIN_PMS_RX           16    // ESP32 RX2 ← PMS5003 TX
+#define PIN_PMS_TX           17    // ESP32 TX2 → PMS5003 RX (optional)
+#define USE_PMS5003          false // set true when PMS5003 connected
+// When USE_PMS5003 is true, the PMS5003 replaces the VESDA
+// pot/4-20mA input as the smoke detection source.
+// Both can coexist: PMS5003 provides particle classification,
+// VESDA provides external system confirmation.
+
+// ═══════════════════════════════════════════════════
+//  OPTICAL SCATTER CHAMBER (ADPD4101)
+//  Custom dual-wavelength chamber via Analog Devices ADPD4101
+//  optical front end on the existing I2C bus (addr 0x24).
+//  When enabled, becomes the primary smoke + particle source
+//  and feeds the classifier like the PMS5003 does.
+// ═══════════════════════════════════════════════════
+#define USE_ADPD4101         false // set true once chamber wired + Wavetool config loaded
+#define ADPD4101_ADDR        0x24
 
 // ═══════════════════════════════════════════════════
 //  SUPPRESSION

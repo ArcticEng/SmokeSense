@@ -36,6 +36,10 @@
 #include <Adafruit_BME680.h>
 #include <Adafruit_MAX31865.h>
 #include "dataguard_config.h"
+#include "fire_classifier.h"
+#include "pms5003.h"
+#include "adpd4101.h"
+#include "runtime_config.h"
 
 // ═══════════════════════════════════════════════════
 //  HARDWARE OBJECTS
@@ -50,6 +54,12 @@ WiFiClient wifiClient;
 PubSubClient mqtt(wifiClient);
 WebServer httpServer(80);
 Preferences prefs;
+FireClassifier classifier;
+PMS5003 pms;
+bool g_pms_ok = false;
+ADPD4101 adpd;
+bool g_adpd_ok = false;
+RuntimeConfig g_cfg;
 
 // ═══════════════════════════════════════════════════
 //  STATE
@@ -58,7 +68,7 @@ Preferences prefs;
 char g_device_id[20];
 char g_hostname[32];
 char TOPIC_TELEMETRY[80], TOPIC_EVENT[80], TOPIC_STATUS[80];
-char TOPIC_HEARTBEAT[80], TOPIC_CMD[80], TOPIC_CONFIG[80];
+char TOPIC_HEARTBEAT[80], TOPIC_CMD[80], TOPIC_CONFIG[80], TOPIC_CONFSTATE[80];
 
 struct GasData {
     float h2_ppm, co_ppm, voc_ppb;
@@ -86,6 +96,14 @@ struct VesdaData {
     uint8_t severity;
 } g_vesda = {};
 
+// Optical chamber / particle smoke source — kept separate from the
+// external VESDA channel so both can be monitored independently.
+struct ChamberData {
+    float smoke_pct;
+    uint8_t severity;
+    const char* source;   // "adpd" | "pms" | "none"
+} g_chamber = { 0.0f, 0, "none" };
+
 struct SuppressionData {
     float cylinder_pressure_bar, cylinder_pct;
     bool discharge_detected, door_open, manual_release, pressure_low;
@@ -103,6 +121,37 @@ bool g_ads_ok = false, g_bme_ok = false, g_rtd_ok = false;
 
 static const char* STAGE_NAMES[] = {"normal","early_warning","pre_alarm","critical","emergency"};
 static const char* STAGE_LABELS[] = {"Normal","Early Warning","Pre-Alarm","Critical","EMERGENCY"};
+
+// ═══════════════════════════════════════════════════
+//  RUNTIME CONFIG — apply live values + publish state
+// ═══════════════════════════════════════════════════
+
+void apply_config() {
+    // Classifier sensitivities
+    classifier.thr.h2_low = g_cfg.thr_h2_low;       classifier.thr.h2_high = g_cfg.thr_h2_high;
+    classifier.thr.co_low = g_cfg.thr_co_low;       classifier.thr.co_high = g_cfg.thr_co_high;
+    classifier.thr.voc_low = g_cfg.thr_voc_low;     classifier.thr.voc_high = g_cfg.thr_voc_high;
+    classifier.thr.temprate_low = g_cfg.thr_temprate_low; classifier.thr.temprate_high = g_cfg.thr_temprate_high;
+    classifier.thr.vesda_low = g_cfg.thr_vesda_low; classifier.thr.vesda_high = g_cfg.thr_vesda_high;
+    classifier.thr.humidity_high = g_cfg.thr_humidity_high;
+    classifier.thr.conf_alert = g_cfg.conf_alert;       classifier.thr.conf_prealarm = g_cfg.conf_prealarm;
+    classifier.thr.conf_critical = g_cfg.conf_critical; classifier.thr.conf_emergency = g_cfg.conf_emergency;
+    // Optical beam sensitivity
+    adpd.smoke_fullscale = g_cfg.adpd_fullscale;    adpd.smoke_thresh_pct = g_cfg.adpd_smoke_thresh;
+    adpd.irblue_small = g_cfg.irblue_small;         adpd.irblue_large = g_cfg.irblue_large;
+    adpd.fwdback_small = g_cfg.fwdback_small;       adpd.fwdback_large = g_cfg.fwdback_large;
+}
+
+void publish_confstate() {
+    if (!mqtt.connected()) return;
+    JsonDocument d;
+    JsonObject o = d.to<JsonObject>();
+    o["dev"] = g_device_id;
+    JsonObject cfg = o["config"].to<JsonObject>();
+    config_to_json(g_cfg, cfg);
+    char buf[1024]; serializeJson(d, buf);
+    mqtt.publish(TOPIC_CONFSTATE, buf, true); // retained so dashboard always sees current state
+}
 
 // ═══════════════════════════════════════════════════
 //  OFFLINE DATA BUFFER (LittleFS)
@@ -171,8 +220,8 @@ void buffer_flush() {
     while ((f = dir.openNextFile()) && flushed < BUFFER_FLUSH_BATCH) {
         String path = String(BUFFER_DIR) + "/" + f.name();
         size_t len = f.size();
-        if (len > 0 && len < 1200) {
-            char buf[1200];
+        if (len > 0 && len < 2560) {
+            char buf[2560];
             f.readBytes(buf, len);
             buf[len] = 0;
             f.close();
@@ -205,6 +254,10 @@ void setup() {
     Serial.println("  Arctic Engineering");
     Serial.println("=======================================");
     g_boot_time = millis();
+
+    // Load persisted runtime config (defaults from #defines, NVS overrides)
+    config_load(g_cfg);
+    apply_config();
 
     // I2C bus
     Wire.begin(PIN_SDA, PIN_SCL);
@@ -262,6 +315,24 @@ void setup() {
     fill_solid(leds, NUM_LEDS, CRGB::Black);
     FastLED.show();
 
+    // PMS5003 particle sensor (optional)
+    if (g_cfg.use_pms) {
+        pms.begin(Serial2, PIN_PMS_RX, PIN_PMS_TX);
+        delay(1000); // Allow sensor to wake up
+        g_pms_ok = true; // Will be validated on first read
+        Serial.println("[PMS5003] Initialised on Serial2");
+    } else {
+        Serial.println("[PMS5003] Disabled (USE_PMS5003=false)");
+    }
+
+    // ADPD4101 optical scatter chamber (optional, shares I2C bus @0x24)
+    if (g_cfg.use_adpd) {
+        g_adpd_ok = adpd.begin(Wire);
+        Serial.printf("[ADPD4101] %s\n", g_adpd_ok ? "OK @0x24" : "FAILED");
+    } else {
+        Serial.println("[ADPD4101] Disabled (USE_ADPD4101=false)");
+    }
+
     // Device identity
     setup_identity();
 
@@ -289,8 +360,9 @@ void setup() {
     FastLED.show();
 
     g_gas.last_rate_calc = millis();
-    Serial.printf("[BOOT] Device: %s | ADS:%s BME:%s RTD:%s BUF:%s\n",
-        g_device_id, g_ads_ok?"OK":"FAIL", g_bme_ok?"OK":"FAIL", g_rtd_ok?"OK":"FAIL", g_littlefs_ok?"OK":"FAIL");
+    Serial.printf("[BOOT] Device: %s | ADS:%s BME:%s RTD:%s PMS:%s BUF:%s\n",
+        g_device_id, g_ads_ok?"OK":"FAIL", g_bme_ok?"OK":"FAIL", g_rtd_ok?"OK":"FAIL",
+        (g_cfg.use_pms && g_pms_ok)?"OK":"OFF", g_littlefs_ok?"OK":"FAIL");
 }
 
 // ═══════════════════════════════════════════════════
@@ -311,6 +383,7 @@ void setup_identity() {
     snprintf(TOPIC_HEARTBEAT,80,"smokesense/%s/%s/heartbeat",MQTT_ORG_ID,g_device_id);
     snprintf(TOPIC_CMD,80,"smokesense/%s/%s/cmd",MQTT_ORG_ID,g_device_id);
     snprintf(TOPIC_CONFIG,80,"smokesense/%s/%s/config",MQTT_ORG_ID,g_device_id);
+    snprintf(TOPIC_CONFSTATE,80,"smokesense/%s/%s/confstate",MQTT_ORG_ID,g_device_id);
 }
 
 void setup_wifi() {
@@ -330,7 +403,7 @@ void setup_wifi() {
 
 void setup_mqtt() {
     mqtt.setServer(MQTT_HOST, MQTT_PORT); mqtt.setCallback(mqtt_cb);
-    mqtt.setKeepAlive(30); mqtt.setBufferSize(1200);
+    mqtt.setKeepAlive(30); mqtt.setBufferSize(2560);
     if (g_wifi_connected) mqtt_connect();
 }
 
@@ -349,14 +422,32 @@ void mqtt_connect() {
         char b[300]; serializeJson(d,b);
         mqtt.publish(TOPIC_STATUS,b,true);
         mqtt.subscribe(TOPIC_CMD,1); mqtt.subscribe(TOPIC_CONFIG,1);
+        publish_confstate();
         Serial.println("[MQTT] Connected.");
     }
 }
 
 void mqtt_cb(char* topic, byte* payload, unsigned int len) {
-    if (len>512) return;
-    char m[513]; memcpy(m,payload,len); m[len]=0;
+    if (len>1024) return;
+    char m[1025]; memcpy(m,payload,len); m[len]=0;
     JsonDocument d; if (deserializeJson(d,m)) return;
+
+    // ── Config topic: merge + persist + apply runtime config ──
+    if (strcmp(topic, TOPIC_CONFIG)==0) {
+        bool prev_adpd = g_cfg.use_adpd, prev_pms = g_cfg.use_pms;
+        if (config_merge_json(g_cfg, d.as<JsonObjectConst>())) {
+            // Newly enabled sensors — initialise on the fly
+            if (g_cfg.use_adpd && !prev_adpd && !g_adpd_ok) g_adpd_ok = adpd.begin(Wire);
+            if (g_cfg.use_pms && !prev_pms) { pms.begin(Serial2, PIN_PMS_RX, PIN_PMS_TX); g_pms_ok = true; }
+            apply_config();
+            config_save(g_cfg);
+            publish_confstate();
+            Serial.println("[CONFIG] Updated, saved, applied.");
+        }
+        return;
+    }
+
+    // ── Command topic ──
     const char* cmd = d["cmd"];
     if (!cmd) return;
     if (strcmp(cmd,"silence")==0) { g_alarm_silenced=true; g_silence_time=millis(); digitalWrite(PIN_BUZZER,LOW); }
@@ -365,11 +456,17 @@ void mqtt_cb(char* topic, byte* payload, unsigned int len) {
         prefs.begin("dg",false);
         prefs.putFloat("bl_h2",g_gas.h2_baseline); prefs.putFloat("bl_co",g_gas.co_baseline);
         prefs.putFloat("bl_voc",g_gas.voc_baseline); prefs.end();
+        if (g_cfg.use_adpd) adpd.recalibrate();
         Serial.printf("[CAL] H2=%.1f CO=%.1f VOC=%.1f\n",g_gas.h2_baseline,g_gas.co_baseline,g_gas.voc_baseline);
     }
     else if (strcmp(cmd,"reboot")==0) { delay(500); ESP.restart(); }
     else if (strcmp(cmd,"identify")==0) {
         for (int j=0;j<8;j++) { fill_solid(leds,NUM_LEDS,(j%2)?CRGB::Blue:CRGB::Black); FastLED.show(); delay(250); }
+    }
+    else if (strcmp(cmd,"get_config")==0) { publish_confstate(); }
+    else if (strcmp(cmd,"reset_config")==0) {
+        config_set_defaults(g_cfg); apply_config(); config_save(g_cfg); publish_confstate();
+        Serial.println("[CONFIG] Reset to defaults.");
     }
 }
 
@@ -484,12 +581,26 @@ void read_environment() {
 }
 
 void read_vesda() {
+    if (!g_cfg.vesda_present) {
+        // No external VESDA system connected — channel inactive.
+        g_vesda.ma_value = 0; g_vesda.smoke_pct = 0; g_vesda.severity = 0;
+        return;
+    }
     uint32_t sum = 0;
     for (int i=0; i<16; i++) { sum += analogRead(PIN_VESDA); delayMicroseconds(100); }
     float raw = sum / 16.0;
-    float v = (raw / 4095.0) * 3.3;
-    g_vesda.ma_value = constrain(v / VESDA_SHUNT * 1000.0, 4.0, 20.0);
-    g_vesda.smoke_pct = ((g_vesda.ma_value - 4.0) / 16.0) * 100.0;
+
+    if (VESDA_USE_POT) {
+        // Prototype mode: pot gives 0-3.3V directly = 0-100%
+        g_vesda.smoke_pct = (raw / 4095.0) * 100.0;
+        g_vesda.ma_value = 4.0 + (g_vesda.smoke_pct / 100.0) * 16.0; // simulated mA
+    } else {
+        // Production mode: 4-20mA via shunt resistor
+        float v = (raw / 4095.0) * 3.3;
+        g_vesda.ma_value = constrain(v / VESDA_SHUNT * 1000.0, 4.0, 20.0);
+        g_vesda.smoke_pct = ((g_vesda.ma_value - 4.0) / 16.0) * 100.0;
+    }
+
     if (g_vesda.smoke_pct >= 60) g_vesda.severity = 4;
     else if (g_vesda.smoke_pct >= 25) g_vesda.severity = 3;
     else if (g_vesda.smoke_pct >= 8) g_vesda.severity = 2;
@@ -501,10 +612,18 @@ void read_suppression() {
     uint32_t sum = 0;
     for (int i=0; i<16; i++) { sum += analogRead(PIN_SUPP_PRESSURE); delayMicroseconds(100); }
     float raw = sum / 16.0;
-    float v = (raw / 4095.0) * 3.3;
-    float ma = constrain(v / SUPP_SHUNT * 1000.0, 4.0, 20.0);
-    g_supp.cylinder_pressure_bar = ((ma - 4.0) / 16.0) * SUPP_MAX_PRESSURE_BAR;
-    g_supp.cylinder_pct = (g_supp.cylinder_pressure_bar / SUPP_NOMINAL_PRESSURE) * 100.0;
+
+    if (SUPP_USE_POT) {
+        // Prototype mode: wire to 3.3V = 100%, GND = 0%
+        g_supp.cylinder_pct = (raw / 4095.0) * 100.0;
+        g_supp.cylinder_pressure_bar = (g_supp.cylinder_pct / 100.0) * SUPP_NOMINAL_PRESSURE;
+    } else {
+        // Production mode: 4-20mA via shunt resistor
+        float v = (raw / 4095.0) * 3.3;
+        float ma = constrain(v / SUPP_SHUNT * 1000.0, 4.0, 20.0);
+        g_supp.cylinder_pressure_bar = ((ma - 4.0) / 16.0) * SUPP_MAX_PRESSURE_BAR;
+        g_supp.cylinder_pct = (g_supp.cylinder_pressure_bar / SUPP_NOMINAL_PRESSURE) * 100.0;
+    }
     g_supp.pressure_low = g_supp.cylinder_pct < SUPP_LOW_PCT;
     g_supp.discharge_detected = (digitalRead(PIN_SUPP_DISCHARGE) == LOW);
     g_supp.door_open = (digitalRead(PIN_DOOR) == LOW);
@@ -557,8 +676,8 @@ void update_outputs() {
 
     // LEDs 0-1: Gas
     CRGB gc = CRGB(0,20,0);
-    if (g_gas.h2_delta > H2_ALERT) gc = CRGB(80,80,0);
-    if (g_gas.h2_delta > H2_CRITICAL) gc = (millis()/500)%2 ? CRGB(255,0,0) : CRGB(80,0,0);
+    if (g_gas.h2_delta > g_cfg.h2_alert) gc = CRGB(80,80,0);
+    if (g_gas.h2_delta > g_cfg.h2_critical) gc = (millis()/500)%2 ? CRGB(255,0,0) : CRGB(80,0,0);
     leds[0]=leds[1]=gc;
 
     // LEDs 2-3: VESDA
@@ -627,9 +746,15 @@ void publish_telemetry() {
     env["temp_rate"]=round(g_env.temp_rate*10)/10.0;
 
     JsonObject vs=d["vesda"].to<JsonObject>();
+    vs["present"]=g_cfg.vesda_present;
     vs["ma"]=round(g_vesda.ma_value*10)/10.0;
     vs["smoke_pct"]=round(g_vesda.smoke_pct*10)/10.0;
     vs["sev"]=g_vesda.severity;
+
+    JsonObject ch=d["chamber"].to<JsonObject>();
+    ch["smoke_pct"]=round(g_chamber.smoke_pct*10)/10.0;
+    ch["sev"]=g_chamber.severity;
+    ch["source"]=g_chamber.source;
 
     JsonObject sp=d["suppression"].to<JsonObject>();
     sp["pressure_bar"]=round(g_supp.cylinder_pressure_bar*10)/10.0;
@@ -640,19 +765,63 @@ void publish_telemetry() {
 
     d["panel_alarm"]=g_panel_alarm;
 
-    // Dashboard compatibility
+    // Fire classifier results
+    JsonObject fc=d["classifier"].to<JsonObject>();
+    fc["fire_type"]=FIRE_TYPE_NAMES[classifier.state.result.fire_type];
+    fc["fire_label"]=FIRE_TYPE_LABELS[classifier.state.result.fire_type];
+    fc["confidence"]=round(classifier.state.result.confidence);
+    fc["action"]=ACTION_NAMES[classifier.state.result.action];
+    fc["action_label"]=ACTION_LABELS[classifier.state.result.action];
+    fc["sensors_active"]=classifier.state.result.sensors_active;
+    fc["sensors_agreeing"]=classifier.state.result.sensors_agreeing;
+    fc["confirmed"]=classifier.state.confirmed;
+    fc["sustained_ms"]=classifier.state.result.sustained_ms;
+    fc["h2_score"]=round(classifier.state.result.h2_score*100);
+    fc["co_score"]=round(classifier.state.result.co_score*100);
+    fc["voc_score"]=round(classifier.state.result.voc_score*100);
+    fc["temp_score"]=round(classifier.state.result.temp_score*100);
+    fc["vesda_score"]=round(classifier.state.result.vesda_score*100);
+
+    // PMS5003 particle sensor data (if connected)
+    if (g_cfg.use_pms && g_pms_ok) {
+        JsonObject pm=d["particles"].to<JsonObject>();
+        pm["pm1_0"]=pms.data.pm1_0_atm;
+        pm["pm2_5"]=pms.data.pm2_5_atm;
+        pm["pm10"]=pms.data.pm10_atm;
+        pm["cnt_0_3"]=pms.data.cnt_0_3um;
+        pm["cnt_1_0"]=pms.data.cnt_1_0um;
+        pm["cnt_2_5"]=pms.data.cnt_2_5um;
+        pm["cnt_10"]=pms.data.cnt_10um;
+        pm["density"]=round(pms.data.smoke_density);
+        pm["ratio"]=round(pms.data.pm1_pm10_ratio*100)/100.0;
+        pm["fire_hint"]=pms.data.particle_fire_hint;
+    }
+
+    // Dashboard compatibility + optical chamber fields
     d["smoke"]=g_severity>=1; d["smoulder"]=false; d["mq2_alm"]=false;
-    d["delta"]=round(g_gas.h2_delta*10)/10.0; d["ir_blue"]=0; d["fwd_back"]=0;
     JsonObject raw=d["raw"].to<JsonObject>();
-    raw["fwd_ir"]=0;raw["fwd_blu"]=0;raw["bck_ir"]=0;raw["bck_blu"]=0;raw["mq2"]=0;
-    raw["temp"]=round(g_env.temp_rtd*10)/10.0; raw["hum"]=round(g_env.humidity);
     JsonObject bl=d["baseline"].to<JsonObject>();
-    bl["fwd"]=0;bl["back"]=0;bl["mq2"]=0;
+    if (g_cfg.use_adpd && g_adpd_ok) {
+        // Real dual-wavelength scatter from the ADPD4101 chamber
+        d["delta"]=round(adpd.data.scatter_delta);
+        d["ir_blue"]=round(adpd.data.ir_blue_ratio*100)/100.0;
+        d["fwd_back"]=round(adpd.data.fwd_back_ratio*100)/100.0;
+        raw["fwd_ir"]=adpd.data.fwd_ir;  raw["fwd_blu"]=adpd.data.fwd_blue;
+        raw["bck_ir"]=adpd.data.back_ir; raw["bck_blu"]=adpd.data.back_blue;
+        bl["fwd"]=adpd.data.bl_fwd_ir;   bl["back"]=adpd.data.bl_back_ir;
+    } else {
+        d["delta"]=round(g_gas.h2_delta*10)/10.0; d["ir_blue"]=0; d["fwd_back"]=0;
+        raw["fwd_ir"]=0;raw["fwd_blu"]=0;raw["bck_ir"]=0;raw["bck_blu"]=0;
+        bl["fwd"]=0;bl["back"]=0;
+    }
+    raw["mq2"]=0;
+    raw["temp"]=round(g_env.temp_rtd*10)/10.0; raw["hum"]=round(g_env.humidity);
+    bl["mq2"]=0;
 
     d["rssi"]=WiFi.RSSI(); d["heap"]=ESP.getFreeHeap();
     d["buffered"]=g_buffered_count;
 
-    char buf[1100]; serializeJson(d,buf);
+    char buf[2560]; serializeJson(d,buf);
 
     if (mqtt.connected()) {
         if (mqtt.publish(TOPIC_TELEMETRY,buf,false)) g_msg_count++;
@@ -669,13 +838,17 @@ void publish_event(uint8_t old_s, uint8_t new_s, const char* src) {
     d["type"]=new_s>old_s?"escalation":"de-escalation";
     d["from_stage"]=STAGE_NAMES[old_s]; d["to_stage"]=STAGE_NAMES[min((int)new_s,4)];
     d["severity"]=new_s; d["source"]=src;
+    d["fire_type"]=FIRE_TYPE_NAMES[classifier.state.result.fire_type];
+    d["fire_label"]=FIRE_TYPE_LABELS[classifier.state.result.fire_type];
+    d["confidence"]=round(classifier.state.result.confidence);
+    d["action"]=ACTION_NAMES[classifier.state.result.action];
     d["h2_ppm"]=g_gas.h2_ppm; d["co_ppm"]=g_gas.co_ppm;
     d["h2_rate"]=g_gas.h2_rate; d["temp"]=g_env.temp_rtd;
     d["temp_rate"]=g_env.temp_rate; d["vesda_pct"]=g_vesda.smoke_pct;
     d["discharged"]=g_supp.discharge_detected;
     d["is_smoke"]=new_s>=1; d["delta"]=g_gas.h2_delta;
     d["ir_blue"]=0; d["mq2"]=0; d["hum"]=round(g_env.humidity);
-    char buf[500]; serializeJson(d,buf);
+    char buf[640]; serializeJson(d,buf);
     mqtt.publish(TOPIC_EVENT,buf,false);
     Serial.printf("[EVENT] %s->%s (%s) H2=%.1f CO=%.1f\n",
         STAGE_NAMES[old_s],STAGE_NAMES[min((int)new_s,4)],src,g_gas.h2_ppm,g_gas.co_ppm);
@@ -711,14 +884,74 @@ void loop() {
 
     if (g_alarm_silenced && (millis()-g_silence_time>SILENCE_DURATION)) g_alarm_silenced=false;
 
-    if (millis()-g_last_sample >= POLL_INTERVAL_MS) {
+    if (millis()-g_last_sample >= g_cfg.poll_ms) {
         g_last_sample = millis();
         read_gas_sensors();
         read_environment();
         read_vesda();
         read_suppression();
         read_panel();
-        process_alarms();
+
+        // PMS5003 particle sensor update (particle classification source)
+        if (g_cfg.use_pms) {
+            pms.update();
+            g_pms_ok = pms.isConnected();
+        }
+
+        // ADPD4101 optical chamber update (smoke + particle classification)
+        if (g_cfg.use_adpd) {
+            adpd.update();
+            g_adpd_ok = adpd.isConnected();
+        }
+
+        // ── Smoke source resolution ────────────────────────
+        // External VESDA (read in read_vesda) is its own channel. The
+        // optical chamber / PMS5003 form the separate "chamber" channel.
+        g_chamber.smoke_pct = 0.0f; g_chamber.source = "none";
+        if (g_cfg.use_adpd && g_adpd_ok) {
+            g_chamber.smoke_pct = adpd.data.smoke_pct; g_chamber.source = "adpd";
+        } else if (g_cfg.use_pms && g_pms_ok) {
+            g_chamber.smoke_pct = pms.data.smoke_density; g_chamber.source = "pms";
+        }
+        if      (g_chamber.smoke_pct >= 60) g_chamber.severity = 4;
+        else if (g_chamber.smoke_pct >= 25) g_chamber.severity = 3;
+        else if (g_chamber.smoke_pct >= 8)  g_chamber.severity = 2;
+        else if (g_chamber.smoke_pct >= 2)  g_chamber.severity = 1;
+        else                                g_chamber.severity = 0;
+
+        // Effective smoke % fed to the classifier:
+        //   VESDA present -> max(VESDA, chamber) so either can escalate
+        //   VESDA absent  -> the chamber is the smoke detector
+        float smoke_pct = g_cfg.vesda_present
+            ? fmaxf(g_vesda.smoke_pct, g_chamber.smoke_pct)
+            : g_chamber.smoke_pct;
+
+        // Fire classification — multi-sensor fusion
+        ClassifierResult fire = classifier.classify(
+            g_gas.h2_delta,          // H2 delta above baseline
+            g_gas.co_delta,          // CO delta above baseline  
+            g_gas.voc_ppb,           // VOC concentration
+            g_env.temp_rate,         // Temperature rate of change
+            smoke_pct,               // Effective smoke % (VESDA and/or chamber)
+            g_env.humidity,          // Humidity (steam detection)
+            g_panel_alarm,           // External fire panel
+            g_supp.discharge_detected, // Suppression discharged
+            g_adpd_ok ? adpd.data.fwd_back_ratio
+                      : (g_pms_ok ? pms.data.pm1_pm10_ratio : -1.0f),  // Optical/particle ratio
+            g_adpd_ok ? adpd.data.particle_fire_hint
+                      : (g_pms_ok ? pms.data.particle_fire_hint : 0)    // Optical/particle fire hint
+        );
+
+        // Use classifier action level as severity
+        g_severity = (uint8_t)fire.action;
+        g_alarm_source = FIRE_TYPE_NAMES[fire.fire_type];
+        if (g_severity != g_prev_severity) {
+            publish_event(g_prev_severity, g_severity, g_alarm_source);
+        }
+        g_prev_severity = g_severity;
+
+        // Relay activates at CRITICAL or higher
+        digitalWrite(PIN_RELAY_OUT, g_severity >= 3 ? HIGH : LOW);
         update_outputs();
 
         Serial.printf("[%8s] H2=%.1f(+%.1f) CO=%.1f(+%.1f) VOC=%.0f T=%.1f/%.1fC VESDA=%.0f%% Supp=%.0f%%%s%s\n",
@@ -728,6 +961,10 @@ void loop() {
             g_vesda.smoke_pct, g_supp.cylinder_pct,
             g_supp.discharge_detected?" DISCHARGED":"",
             g_panel_alarm?" PANEL":"");
+        Serial.printf("         [FIRE] type=%s conf=%.0f%% sensors=%d action=%s%s\n",
+            FIRE_TYPE_LABELS[fire.fire_type], fire.confidence,
+            fire.sensors_active, ACTION_LABELS[fire.action],
+            classifier.state.confirmed ? " CONFIRMED" : "");
 
         publish_telemetry(); // publishes to MQTT or buffers to LittleFS
         digitalWrite(PIN_STATUS, !digitalRead(PIN_STATUS));

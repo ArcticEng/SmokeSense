@@ -173,7 +173,7 @@ export function useTelemetryHistory(deviceId: string | null, hours: number = 24)
     const since = new Date(Date.now() - hours * 3600_000).toISOString();
     supabase
       .from("telemetry")
-      .select("id, device_id, severity, stage, is_smoke, is_smouldering, scatter_delta, ir_blue_ratio, fwd_back_ratio, mq2, temperature, humidity, rssi, recorded_at")
+      .select("id, device_id, severity, stage, fire_type, fire_label, confidence, action, sensors_active, confirmed, h2_ppm, co_ppm, voc_ppb, vesda_pct, vesda_present, optical_pct, is_smoke, is_smouldering, scatter_delta, ir_blue_ratio, fwd_back_ratio, mq2, temperature, humidity, rssi, recorded_at")
       .eq("device_id", deviceId)
       .gte("recorded_at", since)
       .order("recorded_at", { ascending: true })
