@@ -38,7 +38,7 @@
 #include "dataguard_config.h"
 #include "fire_classifier.h"
 #include "pms5003.h"
-#include "adpd4101.h"
+#include "chamber_lightsensor.h"   // TSL2591 commodity scatter chamber (drop-in for adpd4101.h)
 #include "runtime_config.h"
 
 // ═══════════════════════════════════════════════════

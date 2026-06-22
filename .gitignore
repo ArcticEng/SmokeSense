@@ -7,3 +7,5 @@ out/
 dist/
 *.log
 .DS_Store
+.investor_assets/
+.investor_assets/

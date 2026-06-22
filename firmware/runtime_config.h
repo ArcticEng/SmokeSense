@@ -20,7 +20,7 @@
 #include <ArduinoJson.h>
 #include "dataguard_config.h"
 #include "fire_classifier.h"
-#include "adpd4101.h"
+#include "chamber_lightsensor.h"   // TSL2591 commodity scatter chamber (drop-in for adpd4101.h)
 
 struct RuntimeConfig {
     // features

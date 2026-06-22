@@ -12,8 +12,8 @@
 #define DG_FIRMWARE_VERSION  "1.2.0"
 
 // ─── WIFI ────────────────────────────────────────
-#define WIFI_SSID            "YourWiFi"
-#define WIFI_PASS            "YourPassword"
+#define WIFI_SSID            "116"
+#define WIFI_PASS            "swifthamster76"
 #define WIFI_CONNECT_TIMEOUT 15000
 #define AP_PASS              "dataguard2026"
 

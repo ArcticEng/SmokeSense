@@ -665,12 +665,17 @@ startHealthServer();
 setInterval(flushTelemetry, BATCH_INTERVAL_MS);
 
 // Periodic device offline check — mark devices as offline
-// if no heartbeat received in 2 minutes
+// if no heartbeat received in 2 minutes.
+// We also reset last_severity to 0 so an offline device stops showing a
+// stale alarm badge in the fleet view. NOTE: this is a product decision —
+// if you would rather preserve the last-known severity of a device that
+// dropped mid-alarm (e.g. lost power during a real fire), remove
+// `last_severity: 0` here and instead grey out offline badges in the UI.
 setInterval(async () => {
   const twoMinAgo = new Date(Date.now() - 120_000).toISOString();
   const { error } = await supabase
     .from("devices")
-    .update({ is_online: false })
+    .update({ is_online: false, last_severity: 0 })
     .eq("is_online", true)
     .lt("last_seen", twoMinAgo);
 
