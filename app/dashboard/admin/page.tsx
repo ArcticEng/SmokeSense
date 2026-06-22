@@ -148,20 +148,23 @@ function ago(ts: string | null) {
   return s < 60 ? `${s}s` : s < 3600 ? `${Math.round(s / 60)}m` : `${Math.round(s / 3600)}h`;
 }
 
-function Slider({ label, value, min, max, step, onChange, unit, on, onToggle, disabled }: any) {
+function Slider({ label, value, min, max, step, onChange, on, onToggle, disabled, hint }: any) {
   return (
     <div className={`bg-gray-900/40 rounded-lg px-3 py-2 border border-gray-800/50 ${disabled ? "opacity-40" : ""}`}>
-      <div className="flex items-center justify-between mb-1">
+      <div className="flex items-center justify-between mb-1 gap-2">
         <label className="text-xs text-gray-300 flex items-center gap-2">
           {onToggle && (
             <input type="checkbox" checked={on} onChange={(e) => onToggle(e.target.checked)} className="accent-teal-500 w-3.5 h-3.5" title="Sensor connected" />
           )}
           {label}
         </label>
-        <span className="text-xs font-medium text-gray-100 tabular-nums">{value}{unit}</span>
+        <input type="number" min={min} max={max} step={step} value={value} disabled={disabled}
+          onChange={(e) => onChange(e.target.value === "" ? 0 : Number(e.target.value))}
+          className="w-20 bg-gray-800 rounded px-2 py-0.5 text-xs text-right text-gray-100 border border-gray-700 focus:border-teal-600 outline-none tabular-nums" />
       </div>
       <input type="range" min={min} max={max} step={step} value={value} disabled={disabled}
         onChange={(e) => onChange(Number(e.target.value))} className="w-full accent-teal-500" />
+      {hint && <p className="text-[10px] text-gray-600 mt-1">{hint}</p>}
     </div>
   );
 }
@@ -376,12 +379,12 @@ export default function AdminPage() {
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                     {/* Inputs */}
                     <div className="space-y-2">
-                      <Slider label="H₂ ppm" value={tb.h2} min={0} max={300} step={1} unit="" on={tb.h2On} onToggle={(v: boolean) => setTb({ ...tb, h2On: v })} disabled={!tb.h2On} onChange={(v: number) => setTb({ ...tb, h2: v })} />
-                      <Slider label="CO ppm" value={tb.co} min={0} max={150} step={1} unit="" on={tb.coOn} onToggle={(v: boolean) => setTb({ ...tb, coOn: v })} disabled={!tb.coOn} onChange={(v: number) => setTb({ ...tb, co: v })} />
-                      <Slider label="VOC ppb" value={tb.voc} min={0} max={3000} step={10} unit="" on={tb.vocOn} onToggle={(v: boolean) => setTb({ ...tb, vocOn: v })} disabled={!tb.vocOn} onChange={(v: number) => setTb({ ...tb, voc: v })} />
-                      <Slider label="Temp rate °C/min" value={tb.tempRate} min={0} max={10} step={0.1} unit="" on={tb.tempOn} onToggle={(v: boolean) => setTb({ ...tb, tempOn: v })} disabled={!tb.tempOn} onChange={(v: number) => setTb({ ...tb, tempRate: v })} />
-                      <Slider label={`${smokeSource} %`} value={tb.smoke} min={0} max={100} step={1} unit="%" on={tb.smokeOn} onToggle={(v: boolean) => setTb({ ...tb, smokeOn: v })} disabled={!smokeConnected} onChange={(v: number) => setTb({ ...tb, smoke: v })} />
-                      <Slider label="Humidity %" value={tb.humidity} min={0} max={100} step={1} unit="%" onChange={(v: number) => setTb({ ...tb, humidity: v })} />
+                      <Slider label="H₂ ppm" value={tb.h2} min={0} max={300} step={1} hint={`thresholds: low ${benchCfg.thr_h2_low} · high ${benchCfg.thr_h2_high} ppm`} on={tb.h2On} onToggle={(v: boolean) => setTb({ ...tb, h2On: v })} disabled={!tb.h2On} onChange={(v: number) => setTb({ ...tb, h2: v })} />
+                      <Slider label="CO ppm" value={tb.co} min={0} max={150} step={1} hint={`thresholds: low ${benchCfg.thr_co_low} · high ${benchCfg.thr_co_high} ppm`} on={tb.coOn} onToggle={(v: boolean) => setTb({ ...tb, coOn: v })} disabled={!tb.coOn} onChange={(v: number) => setTb({ ...tb, co: v })} />
+                      <Slider label="VOC ppb" value={tb.voc} min={0} max={3000} step={10} hint={`thresholds: low ${benchCfg.thr_voc_low} · high ${benchCfg.thr_voc_high} ppb`} on={tb.vocOn} onToggle={(v: boolean) => setTb({ ...tb, vocOn: v })} disabled={!tb.vocOn} onChange={(v: number) => setTb({ ...tb, voc: v })} />
+                      <Slider label="Temp rate °C/min" value={tb.tempRate} min={0} max={10} step={0.1} hint={`thresholds: low ${benchCfg.thr_temprate_low} · high ${benchCfg.thr_temprate_high} °C/min`} on={tb.tempOn} onToggle={(v: boolean) => setTb({ ...tb, tempOn: v })} disabled={!tb.tempOn} onChange={(v: number) => setTb({ ...tb, tempRate: v })} />
+                      <Slider label={`${smokeSource} %`} value={tb.smoke} min={0} max={100} step={1} hint={`thresholds: low ${benchCfg.thr_vesda_low} · high ${benchCfg.thr_vesda_high} %`} on={tb.smokeOn} onToggle={(v: boolean) => setTb({ ...tb, smokeOn: v })} disabled={!smokeConnected} onChange={(v: number) => setTb({ ...tb, smoke: v })} />
+                      <Slider label="Humidity %" value={tb.humidity} min={0} max={100} step={1} hint={`steam cutoff ${benchCfg.thr_humidity_high}%`} onChange={(v: number) => setTb({ ...tb, humidity: v })} />
                       <div className="flex flex-wrap gap-2 pt-1">
                         <button onClick={() => setTb({ ...tb, panel: !tb.panel })} className={`text-[11px] px-2.5 py-1.5 rounded-lg border ${tb.panel ? "border-teal-600 text-teal-300 bg-teal-950/40" : "border-gray-700 text-gray-500"}`}>Panel alarm</button>
                         <button onClick={() => setTb({ ...tb, discharged: !tb.discharged })} className={`text-[11px] px-2.5 py-1.5 rounded-lg border ${tb.discharged ? "border-red-700 text-red-300 bg-red-950/40" : "border-gray-700 text-gray-500"}`}>Suppression discharged</button>
