@@ -2,8 +2,8 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import Link from "next/link";
 
-// Mirrors firmware config_set_defaults() — used to seed the editor when a
-// device has not yet reported its config.
+// Mirrors firmware config_set_defaults() — seeds editors when a device
+// has not reported its config, and seeds the standalone test bench.
 const DEFAULT_CONFIG: Record<string, any> = {
   vesda_present: true, use_adpd: false, use_pms: false,
   h2_alert: 15, co_alert: 10, voc_alert: 200,
@@ -21,8 +21,7 @@ const DEFAULT_CONFIG: Record<string, any> = {
 const STAGE = ["Monitor", "Alert", "Pre-Alarm", "Critical", "Emergency"];
 const STAGE_COLOR = ["#22c55e", "#eab308", "#f97316", "#ef4444", "#dc2626"];
 
-// ─── Faithful TS port of fire_classifier.h::classify() ───────────────
-// Signature weights [h2, co, voc, temp_rate, vesda] per fire type.
+// ─── Faithful TS port of fire_classifier.h::classify() ───
 const SIGNATURES = [
   [0, 0, 0, 0, 0],
   [0.1, 0.1, 0.2, 0.1, 0.5],
@@ -97,8 +96,8 @@ interface Field { key: string; label: string; type?: "bool" | "num"; step?: numb
 const GROUPS: { title: string; fields: Field[] }[] = [
   { title: "Features", fields: [
     { key: "vesda_present", label: "External VESDA present", type: "bool" },
-    { key: "use_adpd", label: "Optical chamber (ADPD4101)", type: "bool" },
-    { key: "use_pms", label: "PMS5003 particle sensor", type: "bool" },
+    { key: "use_adpd", label: "Optical chamber", type: "bool" },
+    { key: "use_pms", label: "Particle sensor (PMS/SDS)", type: "bool" },
   ]},
   { title: "Optical beam sensitivity", fields: [
     { key: "adpd_fullscale", label: "Scatter full-scale (↓ = more sensitive)", step: 1000 },
@@ -180,15 +179,51 @@ function ScoreBar({ label, score }: { label: string; score: number }) {
   );
 }
 
+function ParamEditor({ values, onChange, baseline }: { values: Record<string, any>; onChange: (k: string, v: any) => void; baseline?: Record<string, any>; }) {
+  return (
+    <>
+      {GROUPS.map((g) => (
+        <div key={g.title} className="mb-5">
+          <p className="text-xs text-gray-500 mb-2">{g.title}</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {g.fields.map((f) => {
+              const changed = baseline ? values[f.key] !== baseline[f.key] : false;
+              if (f.type === "bool") {
+                return (
+                  <label key={f.key} className={`flex items-center justify-between bg-gray-900/40 rounded-lg px-3 py-2.5 border ${changed ? "border-teal-700" : "border-gray-800/50"}`}>
+                    <span className="text-xs text-gray-300">{f.label}</span>
+                    <input type="checkbox" checked={!!values[f.key]} onChange={(e) => onChange(f.key, e.target.checked)} className="accent-teal-500 w-4 h-4" />
+                  </label>
+                );
+              }
+              return (
+                <label key={f.key} className={`flex items-center justify-between bg-gray-900/40 rounded-lg px-3 py-2 border ${changed ? "border-teal-700" : "border-gray-800/50"}`}>
+                  <span className="text-xs text-gray-400 mr-2">{f.label}</span>
+                  <input type="number" step={f.step ?? 1} value={values[f.key] ?? ""}
+                    onChange={(e) => onChange(f.key, e.target.value === "" ? "" : Number(e.target.value))}
+                    className="w-24 bg-gray-800 rounded px-2 py-1 text-xs text-right text-gray-100 border border-gray-700 focus:border-teal-600 outline-none" />
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </>
+  );
+}
+
 export default function AdminPage() {
   const [me, setMe] = useState<{ is_superadmin: boolean; email: string | null } | null>(null);
   const [devices, setDevices] = useState<any[]>([]);
+  const [mode, setMode] = useState<"bench" | "device">("bench");
   const [selId, setSelId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Record<string, any>>({ ...DEFAULT_CONFIG });
   const [baseline, setBaseline] = useState<Record<string, any>>({ ...DEFAULT_CONFIG });
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
 
+  // Standalone test-bench state — its own params + inputs, tied to no device.
+  const [benchCfg, setBenchCfg] = useState<Record<string, any>>({ ...DEFAULT_CONFIG });
   const [tb, setTb] = useState<any>({
     h2: 90, co: 28, voc: 700, tempRate: 1.4, smoke: 14, humidity: 45,
     panel: false, discharged: false, sustained: 0, pmsHint: 0,
@@ -216,31 +251,29 @@ export default function AdminPage() {
   function selectDevice(d: any) {
     const cfg = { ...DEFAULT_CONFIG, ...(d.config || {}) };
     setSelId(d.device_id);
+    setMode("device");
     setDraft(cfg);
     setBaseline(cfg);
     setMsg(d.config ? "" : "No config reported yet — showing defaults");
   }
 
-  const dirty = useMemo(
-    () => Object.keys(draft).filter((k) => draft[k] !== baseline[k]),
-    [draft, baseline]
-  );
+  const dirty = useMemo(() => Object.keys(draft).filter((k) => draft[k] !== baseline[k]), [draft, baseline]);
 
-  // ─── Live classifier result from the CURRENT (unsaved) params ───
-  const smokeSource = draft.vesda_present ? "VESDA" : draft.use_adpd ? "Chamber" : "Smoke (no source)";
-  const smokeConnected = tb.smokeOn && (!!draft.vesda_present || !!draft.use_adpd);
+  // ─── Live classifier result — standalone test bench params ───
+  const smokeSource = benchCfg.vesda_present ? "VESDA" : benchCfg.use_adpd ? "Chamber" : "Smoke (no source)";
+  const smokeConnected = tb.smokeOn && (!!benchCfg.vesda_present || !!benchCfg.use_adpd);
   const cfgNum = useMemo(() => {
     const c: Record<string, number> = {};
     Object.keys(DEFAULT_CONFIG).forEach((k) => {
-      const v = Number(draft[k]); c[k] = Number.isFinite(v) ? v : Number(DEFAULT_CONFIG[k]);
+      const v = Number(benchCfg[k]); c[k] = Number.isFinite(v) ? v : Number(DEFAULT_CONFIG[k]);
     });
     return c;
-  }, [draft]);
+  }, [benchCfg]);
   const result = useMemo(() => classify({
     h2: tb.h2On ? tb.h2 : 0, co: tb.coOn ? tb.co : 0, voc: tb.vocOn ? tb.voc : 0,
     tempRate: tb.tempOn ? tb.tempRate : 0, smoke: smokeConnected ? tb.smoke : 0, humidity: tb.humidity,
     panel: tb.panel, discharged: tb.discharged, sustained: tb.sustained, pmsHint: tb.pmsHint,
-  }, cfgNum, !!draft.use_pms), [tb, cfgNum, smokeConnected, draft.use_pms]);
+  }, cfgNum, !!benchCfg.use_pms), [tb, cfgNum, smokeConnected, benchCfg.use_pms]);
 
   async function push() {
     if (!selId || dirty.length === 0) return;
@@ -271,7 +304,7 @@ export default function AdminPage() {
   }
   if (!me.is_superadmin) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center gap-3">
+      <div className="min-h-screen flex flex-col items-center justify-center gap-3 p-6 text-center">
         <p className="text-gray-400 text-sm">This area is restricted to superadmins.</p>
         <Link href="/dashboard" className="text-teal-400 text-xs hover:text-teal-300">← Back to dashboard</Link>
       </div>
@@ -284,7 +317,7 @@ export default function AdminPage() {
 
   return (
     <div className="min-h-screen flex flex-col">
-      <header className="border-b border-gray-800 px-5 py-3 flex items-center justify-between flex-shrink-0">
+      <header className="border-b border-gray-800 px-4 sm:px-5 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 flex-shrink-0">
         <div>
           <h1 className="text-lg font-medium">SmokeSense — Superadmin</h1>
           <p className="text-xs text-gray-500">{me.email} · fleet control, tuning &amp; classifier test bench</p>
@@ -296,17 +329,24 @@ export default function AdminPage() {
         </div>
       </header>
 
-      <div className="flex flex-1 min-h-0">
-        {/* Fleet list */}
-        <div className="w-[340px] border-r border-gray-800 overflow-y-auto p-3 space-y-1.5 flex-shrink-0">
+      <div className="flex flex-col md:flex-row flex-1 min-h-0">
+        {/* Left menu — test bench + devices */}
+        <div className="w-full md:w-[300px] md:flex-shrink-0 border-b md:border-b-0 md:border-r border-gray-800 md:overflow-y-auto p-3 space-y-1.5">
+          <button onClick={() => setMode("bench")}
+            className={`w-full text-left p-3 rounded-xl border transition ${mode === "bench" ? "bg-gray-800/60 border-gray-600" : "bg-gray-900/40 border-gray-800/50 hover:bg-gray-800/30"}`}>
+            <span className="text-sm font-medium">Classifier test bench</span>
+            <p className="text-[11px] text-gray-500">standalone — tune &amp; test, nothing is sent</p>
+          </button>
+
+          <p className="text-[11px] uppercase tracking-wide text-gray-600 mt-4 mb-1 px-1">Devices</p>
           {devices.length === 0 ? (
-            <p className="text-center text-gray-600 text-sm py-8">No devices</p>
+            <p className="text-center text-gray-600 text-sm py-6">No devices</p>
           ) : devices.map((d) => {
             const sev = Math.min(d.last_severity ?? 0, 4);
-            const cfg = d.config || {};
+            const active = mode === "device" && selId === d.device_id;
             return (
               <button key={d.device_id} onClick={() => selectDevice(d)}
-                className={`w-full text-left p-3 rounded-xl border transition ${selId === d.device_id ? "bg-gray-800/60 border-gray-600" : "bg-gray-900/40 border-gray-800/50 hover:bg-gray-800/30"}`}>
+                className={`w-full text-left p-3 rounded-xl border transition ${active ? "bg-gray-800/60 border-gray-600" : "bg-gray-900/40 border-gray-800/50 hover:bg-gray-800/30"}`}>
                 <div className="flex items-center justify-between mb-1">
                   <div className="flex items-center gap-2">
                     <div className="w-2 h-2 rounded-full" style={{ background: d.is_online ? STAGE_COLOR[sev] : "#555" }} />
@@ -323,163 +363,142 @@ export default function AdminPage() {
           })}
         </div>
 
-        {/* Editor + test bench */}
+        {/* Content */}
         <div className="flex-1 overflow-y-auto">
-          <div className="p-5 max-w-3xl">
-            {/* ── Classifier test bench ── */}
-            <div className="mb-6 rounded-2xl border border-gray-800 bg-gray-900/30 p-4">
-              <div className="flex items-center justify-between mb-3">
-                <p className="text-sm font-medium">Classifier test bench</p>
-                <span className="text-[11px] text-gray-500">runs the device classifier on these inputs with the params below — no device needed</span>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                {/* Inputs */}
-                <div className="space-y-2">
-                  <Slider label="H₂ ppm" value={tb.h2} min={0} max={300} step={1} unit="" on={tb.h2On} onToggle={(v: boolean) => setTb({ ...tb, h2On: v })} disabled={!tb.h2On} onChange={(v: number) => setTb({ ...tb, h2: v })} />
-                  <Slider label="CO ppm" value={tb.co} min={0} max={150} step={1} unit="" on={tb.coOn} onToggle={(v: boolean) => setTb({ ...tb, coOn: v })} disabled={!tb.coOn} onChange={(v: number) => setTb({ ...tb, co: v })} />
-                  <Slider label="VOC ppb" value={tb.voc} min={0} max={3000} step={10} unit="" on={tb.vocOn} onToggle={(v: boolean) => setTb({ ...tb, vocOn: v })} disabled={!tb.vocOn} onChange={(v: number) => setTb({ ...tb, voc: v })} />
-                  <Slider label="Temp rate °C/min" value={tb.tempRate} min={0} max={10} step={0.1} unit="" on={tb.tempOn} onToggle={(v: boolean) => setTb({ ...tb, tempOn: v })} disabled={!tb.tempOn} onChange={(v: number) => setTb({ ...tb, tempRate: v })} />
-                  <Slider label={`${smokeSource} %`} value={tb.smoke} min={0} max={100} step={1} unit="%" on={tb.smokeOn} onToggle={(v: boolean) => setTb({ ...tb, smokeOn: v })} disabled={!smokeConnected} onChange={(v: number) => setTb({ ...tb, smoke: v })} />
-                  <Slider label="Humidity %" value={tb.humidity} min={0} max={100} step={1} unit="%" onChange={(v: number) => setTb({ ...tb, humidity: v })} />
-                  <div className="flex flex-wrap gap-2 pt-1">
-                    <button onClick={() => setTb({ ...tb, panel: !tb.panel })} className={`text-[11px] px-2.5 py-1.5 rounded-lg border ${tb.panel ? "border-teal-600 text-teal-300 bg-teal-950/40" : "border-gray-700 text-gray-500"}`}>Panel alarm</button>
-                    <button onClick={() => setTb({ ...tb, discharged: !tb.discharged })} className={`text-[11px] px-2.5 py-1.5 rounded-lg border ${tb.discharged ? "border-red-700 text-red-300 bg-red-950/40" : "border-gray-700 text-gray-500"}`}>Suppression discharged</button>
+          <div className="p-3 sm:p-5 max-w-3xl">
+            {mode === "bench" ? (
+              <>
+                <div className="mb-6 rounded-2xl border border-gray-800 bg-gray-900/30 p-3 sm:p-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 mb-3">
+                    <p className="text-sm font-medium">Classifier test bench</p>
+                    <span className="text-[11px] text-gray-500">runs the classifier on these inputs with the parameters below — standalone, nothing is sent to a device</span>
                   </div>
-                  <div className="flex items-center gap-1.5 pt-1">
-                    <span className="text-[10px] text-gray-500 mr-1">Sustained:</span>
-                    {["Live", "> 30 s", "> 60 s"].map((lbl, i) => (
-                      <button key={i} onClick={() => setTb({ ...tb, sustained: i })} className={`text-[11px] px-2 py-1 rounded-md border ${tb.sustained === i ? "border-teal-600 text-teal-300" : "border-gray-700 text-gray-500"}`}>{lbl}</button>
-                    ))}
-                  </div>
-                  {draft.use_pms && (
-                    <div className="flex items-center gap-1.5 pt-1">
-                      <span className="text-[10px] text-gray-500 mr-1">Particle hint:</span>
-                      {["—", "Large (smoulder)", "Small (flame)"].map((lbl, i) => (
-                        <button key={i} onClick={() => setTb({ ...tb, pmsHint: i })} className={`text-[11px] px-2 py-1 rounded-md border ${tb.pmsHint === i ? "border-teal-600 text-teal-300" : "border-gray-700 text-gray-500"}`}>{lbl}</button>
-                      ))}
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    {/* Inputs */}
+                    <div className="space-y-2">
+                      <Slider label="H₂ ppm" value={tb.h2} min={0} max={300} step={1} unit="" on={tb.h2On} onToggle={(v: boolean) => setTb({ ...tb, h2On: v })} disabled={!tb.h2On} onChange={(v: number) => setTb({ ...tb, h2: v })} />
+                      <Slider label="CO ppm" value={tb.co} min={0} max={150} step={1} unit="" on={tb.coOn} onToggle={(v: boolean) => setTb({ ...tb, coOn: v })} disabled={!tb.coOn} onChange={(v: number) => setTb({ ...tb, co: v })} />
+                      <Slider label="VOC ppb" value={tb.voc} min={0} max={3000} step={10} unit="" on={tb.vocOn} onToggle={(v: boolean) => setTb({ ...tb, vocOn: v })} disabled={!tb.vocOn} onChange={(v: number) => setTb({ ...tb, voc: v })} />
+                      <Slider label="Temp rate °C/min" value={tb.tempRate} min={0} max={10} step={0.1} unit="" on={tb.tempOn} onToggle={(v: boolean) => setTb({ ...tb, tempOn: v })} disabled={!tb.tempOn} onChange={(v: number) => setTb({ ...tb, tempRate: v })} />
+                      <Slider label={`${smokeSource} %`} value={tb.smoke} min={0} max={100} step={1} unit="%" on={tb.smokeOn} onToggle={(v: boolean) => setTb({ ...tb, smokeOn: v })} disabled={!smokeConnected} onChange={(v: number) => setTb({ ...tb, smoke: v })} />
+                      <Slider label="Humidity %" value={tb.humidity} min={0} max={100} step={1} unit="%" onChange={(v: number) => setTb({ ...tb, humidity: v })} />
+                      <div className="flex flex-wrap gap-2 pt-1">
+                        <button onClick={() => setTb({ ...tb, panel: !tb.panel })} className={`text-[11px] px-2.5 py-1.5 rounded-lg border ${tb.panel ? "border-teal-600 text-teal-300 bg-teal-950/40" : "border-gray-700 text-gray-500"}`}>Panel alarm</button>
+                        <button onClick={() => setTb({ ...tb, discharged: !tb.discharged })} className={`text-[11px] px-2.5 py-1.5 rounded-lg border ${tb.discharged ? "border-red-700 text-red-300 bg-red-950/40" : "border-gray-700 text-gray-500"}`}>Suppression discharged</button>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                        <span className="text-[10px] text-gray-500 mr-1">Held for:</span>
+                        {["Just now", "30 s", "60 s"].map((lbl, i) => (
+                          <button key={i} onClick={() => setTb({ ...tb, sustained: i })} className={`text-[11px] px-2 py-1 rounded-md border ${tb.sustained === i ? "border-teal-600 text-teal-300" : "border-gray-700 text-gray-500"}`}>{lbl}</button>
+                        ))}
+                      </div>
+                      {benchCfg.use_pms && (
+                        <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                          <span className="text-[10px] text-gray-500 mr-1">Particle hint:</span>
+                          {["—", "Large (smoulder)", "Small (flame)"].map((lbl, i) => (
+                            <button key={i} onClick={() => setTb({ ...tb, pmsHint: i })} className={`text-[11px] px-2 py-1 rounded-md border ${tb.pmsHint === i ? "border-teal-600 text-teal-300" : "border-gray-700 text-gray-500"}`}>{lbl}</button>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
 
-                {/* Live verdict */}
-                <div className="rounded-xl border p-4 flex flex-col" style={{ borderColor: ac + "55", background: ac + "11" }}>
-                  <div className="text-[11px] uppercase tracking-wide" style={{ color: ac }}>{ACTION_LABELS[result.action]}</div>
-                  <div className="text-xl font-semibold mt-1 mb-0.5" style={{ color: ac }}>{FIRE_LABELS[result.fireType]}</div>
-                  <div className="flex items-baseline gap-2 mb-3">
-                    <span className="text-3xl font-bold tabular-nums" style={{ color: ac }}>{Math.round(result.confidence)}%</span>
-                    <span className="text-[11px] text-gray-500">confidence · severity {result.action}</span>
-                    {result.confirmed && <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-300">confirmed</span>}
+                    {/* Verdict */}
+                    <div className="rounded-xl border p-4 flex flex-col" style={{ borderColor: ac + "55", background: ac + "11" }}>
+                      <div className="text-[11px] uppercase tracking-wide" style={{ color: ac }}>{ACTION_LABELS[result.action]}</div>
+                      <div className="text-xl font-semibold mt-1 mb-0.5" style={{ color: ac }}>{FIRE_LABELS[result.fireType]}</div>
+                      <div className="flex items-baseline gap-2 mb-3 flex-wrap">
+                        <span className="text-3xl font-bold tabular-nums" style={{ color: ac }}>{Math.round(result.confidence)}%</span>
+                        <span className="text-[11px] text-gray-500">confidence · severity {result.action}</span>
+                        {result.confirmed && <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-300">confirmed</span>}
+                      </div>
+                      <div className="space-y-1 mb-3">
+                        <ScoreBar label="H₂" score={result.s.h2} />
+                        <ScoreBar label="CO" score={result.s.co} />
+                        <ScoreBar label="VOC" score={result.s.voc} />
+                        <ScoreBar label="Temp" score={result.s.temp} />
+                        <ScoreBar label="Smoke" score={result.s.vesda} />
+                      </div>
+                      <div className="text-[11px] text-gray-500 mt-auto leading-relaxed">
+                        {result.active} sensor{result.active === 1 ? "" : "s"} active · agreement ×{result.mult.toFixed(2)}<br />
+                        raw match {Math.round(result.raw)}% → after agreement {Math.round(result.raw * result.mult)}%
+                      </div>
+                    </div>
                   </div>
-                  <div className="space-y-1 mb-3">
-                    <ScoreBar label="H₂" score={result.s.h2} />
-                    <ScoreBar label="CO" score={result.s.co} />
-                    <ScoreBar label="VOC" score={result.s.voc} />
-                    <ScoreBar label="Temp" score={result.s.temp} />
-                    <ScoreBar label="Smoke" score={result.s.vesda} />
-                  </div>
-                  <div className="text-[11px] text-gray-500 mt-auto leading-relaxed">
-                    {result.active} sensor{result.active === 1 ? "" : "s"} active · agreement ×{result.mult.toFixed(2)}<br />
-                    raw match {Math.round(result.raw)}% → after agreement {Math.round(result.raw * result.mult)}%
-                  </div>
-                </div>
-              </div>
 
-              {/* ── Classification matrix (live) ── */}
-              <div className="mt-4 pt-4 border-t border-gray-800/70">
-                <p className="text-[11px] text-gray-500 mb-2">Classification matrix — each cell = sensor score × that fire type&apos;s weight; row total = match score. Re-ranks live as you change inputs or thresholds.</p>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-[10px]">
-                    <thead>
-                      <tr className="text-gray-500">
-                        <th className="text-left font-normal py-1 pr-2">Fire type</th>
-                        {["H₂", "CO", "VOC", "Temp", "Smoke"].map((h) => (<th key={h} className="font-normal px-1 w-10">{h}</th>))}
-                        <th className="font-normal px-1 text-right w-12">Match</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {[1, 2, 3, 4, 5, 6].map((ti) => {
-                        const sc = [result.s.h2, result.s.co, result.s.voc, result.s.temp, result.s.vesda];
-                        const w = SIGNATURES[ti];
-                        const total = Math.round(result.match[ti]);
-                        const win = ti === result.fireType && result.fireType !== 0;
-                        return (
-                          <tr key={ti} className={win ? "text-teal-300 font-medium" : "text-gray-400"} style={win ? { background: "#1d9e7418" } : undefined}>
-                            <td className="py-1 pr-2 whitespace-nowrap">{FIRE_LABELS[ti]}{win ? " ◄" : ""}</td>
-                            {w.map((wt, k) => {
-                              const c = sc[k] * wt;
-                              return (
-                                <td key={k} className="px-1 text-center tabular-nums" style={{ background: `rgba(45,158,114,${Math.min(0.9, c * 1.8)})`, color: c > 0.25 ? "#fff" : undefined }}>
-                                  {c > 0.001 ? Math.round(c * 100) : "·"}
-                                </td>
-                              );
-                            })}
-                            <td className="px-1 text-right tabular-nums">{total}</td>
+                  {/* Classification matrix (live) */}
+                  <div className="mt-4 pt-4 border-t border-gray-800/70">
+                    <p className="text-[11px] text-gray-500 mb-2">Classification matrix — each cell = sensor score × that fire type&apos;s weight; row total = match score. Re-ranks live.</p>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-[10px] min-w-[420px]">
+                        <thead>
+                          <tr className="text-gray-500">
+                            <th className="text-left font-normal py-1 pr-2">Fire type</th>
+                            {["H₂", "CO", "VOC", "Temp", "Smoke"].map((h) => (<th key={h} className="font-normal px-1 w-10">{h}</th>))}
+                            <th className="font-normal px-1 text-right w-12">Match</th>
                           </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                        </thead>
+                        <tbody>
+                          {[1, 2, 3, 4, 5, 6].map((ti) => {
+                            const sc = [result.s.h2, result.s.co, result.s.voc, result.s.temp, result.s.vesda];
+                            const w = SIGNATURES[ti];
+                            const total = Math.round(result.match[ti]);
+                            const win = ti === result.fireType && result.fireType !== 0;
+                            return (
+                              <tr key={ti} className={win ? "text-teal-300 font-medium" : "text-gray-400"} style={win ? { background: "#1d9e7418" } : undefined}>
+                                <td className="py-1 pr-2 whitespace-nowrap">{FIRE_LABELS[ti]}{win ? " ◄" : ""}</td>
+                                {w.map((wt, k) => {
+                                  const c = sc[k] * wt;
+                                  return (
+                                    <td key={k} className="px-1 text-center tabular-nums" style={{ background: `rgba(45,158,114,${Math.min(0.9, c * 1.8)})`, color: c > 0.25 ? "#fff" : undefined }}>
+                                      {c > 0.001 ? Math.round(c * 100) : "·"}
+                                    </td>
+                                  );
+                                })}
+                                <td className="px-1 text-right tabular-nums">{total}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
                 </div>
-              </div>
-            </div>
 
-            {/* ── Device header / commands ── */}
-            {selected ? (
-              <div className="flex items-center justify-between mb-4">
-                <div>
-                  <h2 className="text-base font-medium">{selected.name || selected.device_id}</h2>
-                  <p className="text-xs text-gray-500">{selected.device_id} · {selected.org_name || "—"} · {selected.is_online ? <span className="text-green-400">online</span> : <span className="text-red-400">offline</span>}</p>
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs text-gray-500">Test-bench parameters (local — adjust to see how classification changes)</p>
+                  <button onClick={() => setBenchCfg({ ...DEFAULT_CONFIG })} className="text-[11px] text-gray-500 hover:text-gray-300">Reset to defaults</button>
                 </div>
-                <div className="flex gap-2">
-                  <button onClick={() => sendCmd("get_config")} disabled={busy} className="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:bg-gray-800 disabled:opacity-40">Refresh</button>
-                  <button onClick={() => sendCmd("recalibrate")} disabled={busy} className="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:bg-gray-800 disabled:opacity-40">Re-zero chamber</button>
-                  <button onClick={() => sendCmd("reset_config")} disabled={busy} className="text-xs px-3 py-1.5 rounded-lg border border-amber-900 text-amber-400 hover:bg-amber-950 disabled:opacity-40">Reset defaults</button>
-                </div>
-              </div>
+                <ParamEditor values={benchCfg} onChange={(k, v) => setBenchCfg({ ...benchCfg, [k]: v })} />
+              </>
+            ) : !selected ? (
+              <div className="flex items-center justify-center h-40 text-gray-600 text-sm">Select a device from the list.</div>
             ) : (
-              <p className="text-xs text-gray-500 mb-4">Tuning parameters below feed the test bench live. Select a device from the list to push these settings to it.</p>
-            )}
-
-            {GROUPS.map((g) => (
-              <div key={g.title} className="mb-5">
-                <p className="text-xs text-gray-500 mb-2">{g.title}</p>
-                <div className="grid grid-cols-2 gap-2">
-                  {g.fields.map((f) => {
-                    const changed = draft[f.key] !== baseline[f.key];
-                    if (f.type === "bool") {
-                      return (
-                        <label key={f.key} className={`flex items-center justify-between bg-gray-900/40 rounded-lg px-3 py-2.5 border ${changed ? "border-teal-700" : "border-gray-800/50"}`}>
-                          <span className="text-xs text-gray-300">{f.label}</span>
-                          <input type="checkbox" checked={!!draft[f.key]} onChange={(e) => setDraft({ ...draft, [f.key]: e.target.checked })} className="accent-teal-500 w-4 h-4" />
-                        </label>
-                      );
-                    }
-                    return (
-                      <label key={f.key} className={`flex items-center justify-between bg-gray-900/40 rounded-lg px-3 py-2 border ${changed ? "border-teal-700" : "border-gray-800/50"}`}>
-                        <span className="text-xs text-gray-400 mr-2">{f.label}</span>
-                        <input type="number" step={f.step ?? 1} value={draft[f.key] ?? ""}
-                          onChange={(e) => setDraft({ ...draft, [f.key]: e.target.value === "" ? "" : Number(e.target.value) })}
-                          className="w-24 bg-gray-800 rounded px-2 py-1 text-xs text-right text-gray-100 border border-gray-700 focus:border-teal-600 outline-none" />
-                      </label>
-                    );
-                  })}
+              <>
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4">
+                  <div>
+                    <h2 className="text-base font-medium">{selected.name || selected.device_id}</h2>
+                    <p className="text-xs text-gray-500">{selected.device_id} · {selected.org_name || "—"} · {selected.is_online ? <span className="text-green-400">online</span> : <span className="text-red-400">offline</span>}</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button onClick={() => sendCmd("get_config")} disabled={busy} className="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:bg-gray-800 disabled:opacity-40">Refresh</button>
+                    <button onClick={() => sendCmd("recalibrate")} disabled={busy} className="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:bg-gray-800 disabled:opacity-40">Re-zero chamber</button>
+                    <button onClick={() => sendCmd("reset_config")} disabled={busy} className="text-xs px-3 py-1.5 rounded-lg border border-amber-900 text-amber-400 hover:bg-amber-950 disabled:opacity-40">Reset defaults</button>
+                  </div>
                 </div>
-              </div>
-            ))}
 
-            <div className="sticky bottom-0 bg-gradient-to-t from-black/90 to-transparent pt-4 pb-2 flex items-center gap-3">
-              <button onClick={push} disabled={busy || !selId || dirty.length === 0}
-                className="px-4 py-2.5 rounded-lg text-sm font-medium bg-teal-600 hover:bg-teal-500 text-white disabled:opacity-30 disabled:cursor-not-allowed">
-                {busy ? "Pushing…" : !selId ? "Select a device to push" : dirty.length ? `Push ${dirty.length} change${dirty.length > 1 ? "s" : ""}` : "No changes"}
-              </button>
-              {dirty.length > 0 && (
-                <button onClick={() => setDraft({ ...baseline })} className="text-xs text-gray-500 hover:text-gray-300">Discard</button>
-              )}
-              {msg && <span className="text-xs text-gray-400">{msg}</span>}
-              {selected?.config_updated_at && (
-                <span className="text-[11px] text-gray-600 ml-auto">device reported {ago(selected.config_updated_at)} ago</span>
-              )}
-            </div>
+                <ParamEditor values={draft} onChange={(k, v) => setDraft({ ...draft, [k]: v })} baseline={baseline} />
+
+                <div className="sticky bottom-0 bg-gradient-to-t from-black/90 to-transparent pt-4 pb-2 flex flex-wrap items-center gap-3">
+                  <button onClick={push} disabled={busy || dirty.length === 0}
+                    className="px-4 py-2.5 rounded-lg text-sm font-medium bg-teal-600 hover:bg-teal-500 text-white disabled:opacity-30 disabled:cursor-not-allowed">
+                    {busy ? "Pushing…" : dirty.length ? `Push ${dirty.length} change${dirty.length > 1 ? "s" : ""}` : "No changes"}
+                  </button>
+                  {dirty.length > 0 && <button onClick={() => setDraft({ ...baseline })} className="text-xs text-gray-500 hover:text-gray-300">Discard</button>}
+                  {msg && <span className="text-xs text-gray-400">{msg}</span>}
+                  {selected.config_updated_at && <span className="text-[11px] text-gray-600 ml-auto">device reported {ago(selected.config_updated_at)} ago</span>}
+                </div>
+              </>
+            )}
           </div>
         </div>
       </div>
