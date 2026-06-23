@@ -52,6 +52,29 @@ body { transition: background-color 0.15s ease, color 0.15s ease; }
 .light .hover\:bg-gray-800\/30:hover { background: #eef1f4 !important; }
 .light .hover\:text-gray-300:hover { color: #1b2733 !important; }
 
+/* severity accent fills (hero, badges, banner) carry --sev = accent colour.
+   In light mode swap the dark fill for a light tint + darkened accent text. */
+.light .stage-fill {
+  background: color-mix(in srgb, var(--sev) 13%, #ffffff) !important;
+  border-color: color-mix(in srgb, var(--sev) 40%, #ffffff) !important;
+  color: color-mix(in srgb, var(--sev) 60%, #000000) !important;
+}
+.light .stage-text { color: color-mix(in srgb, var(--sev) 60%, #000000) !important; }
+
+/* semantic tint chips (alarms, subsystem tiles, badges) → light tints */
+.light .bg-red-950, .light .bg-red-950\/50 { background: #fdeaea !important; }
+.light .bg-amber-950, .light .bg-amber-950\/40 { background: #fbf0d9 !important; }
+.light .bg-teal-950 { background: #d9f2ec !important; }
+.light .border-red-900, .light .border-red-900\/50 { border-color: #f1b7b7 !important; }
+.light .border-amber-900 { border-color: #e9cd96 !important; }
+.light .border-teal-900 { border-color: #a6dccf !important; }
+
+/* accent text needs darker shades to read on light surfaces */
+.light .text-red-400 { color: #c01c1c !important; }
+.light .text-amber-400 { color: #a25a07 !important; }
+.light .text-teal-400 { color: #0f766e !important; }
+.light .text-green-400 { color: #15803d !important; }
+
 /* sticky push-bar gradient (admin) reads dark by default */
 .light .from-black\/90 {
   --tw-gradient-from: rgba(244, 246, 248, 0.92) var(--tw-gradient-from-position) !important;

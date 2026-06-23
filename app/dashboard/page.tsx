@@ -163,7 +163,7 @@ function DeviceCard({ device, selected, onClick }: { device: Device; selected: b
           <span className="text-sm font-medium">{device.name}</span>
           {isDataGuard && <span className="text-[9px] px-1.5 py-0.5 rounded bg-teal-950 text-teal-400 border border-teal-900">DG</span>}
         </div>
-        <span className="text-[11px] px-2 py-0.5 rounded-md font-medium" style={{ background: s.bg, color: s.color, border: `1px solid ${s.border}` }}>{s.label}</span>
+        <span className="text-[11px] px-2 py-0.5 rounded-md font-medium stage-fill" style={{ ["--sev" as any]: s.color, background: s.bg, color: s.color, border: `1px solid ${s.border}` }}>{s.label}</span>
       </div>
       <div className="text-[11px] text-gray-500 mb-2">
         {device.zone || "—"} {ago !== null ? `· ${ago < 60 ? `${ago}s` : `${Math.round(ago / 60)}m`} ago` : ""}
@@ -289,7 +289,7 @@ function DeviceDetail({ device, orgId, userId, onBack }: { device: Device; orgId
         {onBack && (
           <button onClick={onBack} className="md:hidden text-gray-400 text-sm px-2 py-1 rounded-md border border-gray-800">←</button>
         )}
-        <div className="w-10 h-10 rounded-xl flex items-center justify-center text-sm font-bold" style={{ background: s.bg, color: s.color, border: `1px solid ${s.border}` }}>
+        <div className="w-10 h-10 rounded-xl flex items-center justify-center text-sm font-bold stage-fill" style={{ ["--sev" as any]: s.color, background: s.bg, color: s.color, border: `1px solid ${s.border}` }}>
           {device.last_severity}
         </div>
         <div>
@@ -301,11 +301,11 @@ function DeviceDetail({ device, orgId, userId, onBack }: { device: Device; orgId
       {isDataGuard ? (
         <>
           {/* Status hero */}
-          <div className="rounded-2xl p-4 mb-4 border" style={{ background: s.bg, borderColor: s.border }}>
+          <div className="rounded-2xl p-4 mb-4 border stage-fill" style={{ ["--sev" as any]: s.color, background: s.bg, borderColor: s.border }}>
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <div>
-                <div className="text-[11px] font-medium uppercase tracking-wide" style={{ color: s.color }}>{s.label} — {s.desc}</div>
-                <div className="text-2xl font-semibold mt-1" style={{ color: s.color }}>{telemetry?.fire_label || "Normal"}</div>
+                <div className="text-[11px] font-medium uppercase tracking-wide stage-text" style={{ color: s.color }}>{s.label} — {s.desc}</div>
+                <div className="text-2xl font-semibold mt-1 stage-text" style={{ color: s.color }}>{telemetry?.fire_label || "Normal"}</div>
                 <div className="text-[11px] text-gray-400 mt-1">
                   Action: {telemetry?.action || "monitor"} · {telemetry?.sensors_active ?? 0} sensors agreeing
                   {telemetry?.confirmed && <span className="ml-1 text-red-400 font-medium">· confirmed</span>}
@@ -313,7 +313,7 @@ function DeviceDetail({ device, orgId, userId, onBack }: { device: Device; orgId
               </div>
               <div className="text-left sm:text-right">
                 <div className="text-[11px] text-gray-400">Confidence</div>
-                <div className="text-4xl font-bold tabular-nums" style={{ color: s.color }}>{Math.round(telemetry?.confidence || 0)}%</div>
+                <div className="text-4xl font-bold tabular-nums stage-text" style={{ color: s.color }}>{Math.round(telemetry?.confidence || 0)}%</div>
               </div>
             </div>
           </div>
@@ -382,7 +382,7 @@ function DeviceDetail({ device, orgId, userId, onBack }: { device: Device; orgId
       ) : (
         <>
           {/* Status banner (legacy node) */}
-          <div className="rounded-xl px-4 py-3 mb-5 text-sm font-medium" style={{ background: s.bg, color: s.color, border: `1px solid ${s.border}` }}>
+          <div className="rounded-xl px-4 py-3 mb-5 text-sm font-medium stage-fill" style={{ ["--sev" as any]: s.color, background: s.bg, color: s.color, border: `1px solid ${s.border}` }}>
             {s.label}: {s.desc}
             {telemetry?.is_smoke && <span className="ml-2 opacity-70">({telemetry.is_smouldering ? "smouldering" : "flaming"})</span>}
           </div>
