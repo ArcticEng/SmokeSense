@@ -24,7 +24,7 @@
 
 struct RuntimeConfig {
     // features
-    bool  vesda_present, use_adpd, use_pms;
+    bool  vesda_present, use_adpd, use_pms, gas_present, use_mq;
     // gas alert thresholds
     float h2_alert, co_alert, voc_alert;
     float h2_critical, co_critical, h2_emergency, co_emergency;
@@ -43,6 +43,7 @@ struct RuntimeConfig {
 
 inline void config_set_defaults(RuntimeConfig& c) {
     c.vesda_present = VESDA_PRESENT; c.use_adpd = USE_ADPD4101; c.use_pms = USE_PMS5003;
+    c.gas_present = GAS_PRESENT; c.use_mq = USE_MQ_FALLBACK;
     c.h2_alert = H2_ALERT; c.co_alert = CO_ALERT; c.voc_alert = VOC_ALERT;
     c.h2_critical = H2_CRITICAL; c.co_critical = CO_CRITICAL;
     c.h2_emergency = H2_EMERGENCY; c.co_emergency = CO_EMERGENCY;
@@ -66,6 +67,7 @@ inline bool config_merge_json(RuntimeConfig& c, JsonObjectConst o) {
     #define CFG_F(k, f) if (o[k].is<float>() || o[k].is<int>()){ c.f = o[k].as<float>();    ch = true; }
     #define CFG_U(k, f) if (o[k].is<int>())                    { c.f = o[k].as<uint32_t>(); ch = true; }
     CFG_B("vesda_present", vesda_present) CFG_B("use_adpd", use_adpd) CFG_B("use_pms", use_pms)
+    CFG_B("gas_present", gas_present) CFG_B("use_mq", use_mq)
     CFG_F("h2_alert", h2_alert) CFG_F("co_alert", co_alert) CFG_F("voc_alert", voc_alert)
     CFG_F("h2_critical", h2_critical) CFG_F("co_critical", co_critical)
     CFG_F("h2_emergency", h2_emergency) CFG_F("co_emergency", co_emergency)
@@ -90,6 +92,7 @@ inline bool config_merge_json(RuntimeConfig& c, JsonObjectConst o) {
 
 inline void config_to_json(const RuntimeConfig& c, JsonObject o) {
     o["vesda_present"] = c.vesda_present; o["use_adpd"] = c.use_adpd; o["use_pms"] = c.use_pms;
+    o["gas_present"] = c.gas_present; o["use_mq"] = c.use_mq;
     o["h2_alert"] = c.h2_alert; o["co_alert"] = c.co_alert; o["voc_alert"] = c.voc_alert;
     o["h2_critical"] = c.h2_critical; o["co_critical"] = c.co_critical;
     o["h2_emergency"] = c.h2_emergency; o["co_emergency"] = c.co_emergency;

@@ -12,17 +12,17 @@
 #define DG_FIRMWARE_VERSION  "1.2.0"
 
 // ─── WIFI ────────────────────────────────────────
-#define WIFI_SSID            "116"
-#define WIFI_PASS            "swifthamster76"
+#define WIFI_SSID           "5G-unit116-dockroad-ftta"
+#define WIFI_PASS           "swifthamster79"
 #define WIFI_CONNECT_TIMEOUT 15000
 #define AP_PASS              "dataguard2026"
 
 // ─── MQTT ────────────────────────────────────────
-#define MQTT_HOST            "broker.hivemq.com"
-#define MQTT_PORT            1883
-#define MQTT_USER            ""
-#define MQTT_PASS            ""
-#define MQTT_ORG_ID          "default"
+#define MQTT_HOST            "switchback.proxy.rlwy.net"
+#define MQTT_PORT            35720
+#define MQTT_USER            "dataguard"
+#define MQTT_PASS            "DG_Device_Secret_2026!"
+#define MQTT_ORG_ID          "demo"
 
 // #define DEVICE_ID_OVERRIDE "dc-batt-room-a"
 
@@ -127,8 +127,13 @@
 #define CO_ISB_SENSITIVITY   3.5    // nA/ppm (from CO-AF datasheet)
 #define CO_ISB_WE_ZERO_MV    350.0  // WE voltage at zero gas
 
+// Set false if NO gas sensors are fitted (neither Alphasense nor MQ-7/MQ-8).
+// Forces H2/CO to zero so unconnected/floating ADS inputs can't produce false
+// gas readings — the classifier then simply runs without the gas channels.
+#define GAS_PRESENT          true
+
 // For MQ hobby sensor fallback (if using MQ-8/MQ-7 on ADS1115):
-#define USE_MQ_FALLBACK      false  // set true if using MQ sensors instead of Alphasense
+#define USE_MQ_FALLBACK      true   // set true if using MQ sensors instead of Alphasense
 #define MQ_H2_SCALE          0.5    // ADC_voltage * scale = approx ppm
 #define MQ_CO_SCALE           0.25
 

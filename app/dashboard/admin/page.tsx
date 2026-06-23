@@ -5,7 +5,7 @@ import Link from "next/link";
 // Mirrors firmware config_set_defaults() — seeds editors when a device
 // has not reported its config, and seeds the standalone test bench.
 const DEFAULT_CONFIG: Record<string, any> = {
-  vesda_present: true, use_adpd: false, use_pms: false,
+  vesda_present: true, use_adpd: false, use_pms: false, gas_present: true, use_mq: true,
   h2_alert: 15, co_alert: 10, voc_alert: 200,
   h2_critical: 50, co_critical: 30, h2_emergency: 150, co_emergency: 80,
   h2_rate_critical: 20, temp_rate_critical: 2,
@@ -98,6 +98,8 @@ const GROUPS: { title: string; fields: Field[] }[] = [
     { key: "vesda_present", label: "External VESDA present", type: "bool" },
     { key: "use_adpd", label: "Optical chamber", type: "bool" },
     { key: "use_pms", label: "Particle sensor (PMS/SDS)", type: "bool" },
+    { key: "gas_present", label: "Gas sensors fitted (H₂/CO)", type: "bool" },
+    { key: "use_mq", label: "MQ-7/MQ-8 gas (else Alphasense)", type: "bool" },
   ]},
   { title: "Optical beam sensitivity", fields: [
     { key: "adpd_fullscale", label: "Scatter full-scale (↓ = more sensitive)", step: 1000 },

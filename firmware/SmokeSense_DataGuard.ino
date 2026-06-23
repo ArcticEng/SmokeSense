@@ -500,7 +500,7 @@ void read_gas_sensors() {
     g_gas.co_prev = g_gas.co_ppm;
     g_gas.voc_prev = g_gas.voc_ppb;
 
-    if (g_ads_ok) {
+    if (g_cfg.gas_present && g_ads_ok) {
         // Read all 4 ADS1115 channels
         g_gas.h2_we_raw = ads.readADC_SingleEnded(ADS_CH_H2_WE);
         g_gas.h2_ae_raw = ads.readADC_SingleEnded(ADS_CH_H2_AE);
@@ -513,7 +513,7 @@ void read_gas_sensors() {
         float h2_ae_mv = g_gas.h2_ae_raw * 0.125;
         float co_ae_mv = g_gas.co_ae_raw * 0.125;
 
-        if (USE_MQ_FALLBACK) {
+        if (g_cfg.use_mq) {
             // MQ hobby sensors: simple voltage-to-ppm approximation
             g_gas.h2_ppm = (g_gas.h2_we_mv / 1000.0) * MQ_H2_SCALE * 1000.0;
             g_gas.co_ppm = (g_gas.co_we_mv / 1000.0) * MQ_CO_SCALE * 1000.0;
@@ -527,6 +527,11 @@ void read_gas_sensors() {
             g_gas.h2_ppm = max(0.0f, h2_diff / (H2_ISB_SENSITIVITY * 0.1f));
             g_gas.co_ppm = max(0.0f, co_diff / (CO_ISB_SENSITIVITY * 0.1f));
         }
+    } else {
+        // GAS_PRESENT false (or ADS missing): force gas to zero so floating
+        // inputs can't fake H2/CO. The classifier excludes the gas channels.
+        g_gas.h2_ppm = 0; g_gas.co_ppm = 0;
+        g_gas.h2_we_mv = 0; g_gas.co_we_mv = 0;
     }
 
     // Deltas
@@ -544,7 +549,7 @@ void read_gas_sensors() {
 }
 
 void read_environment() {
-    g_env.temp_prev = g_env.temperature;
+    g_env.temp_prev = g_env.temp_rtd;   // previous effective temperature (RTD or BME)
 
     // BME680: temp + humidity + pressure + VOC gas resistance
     if (g_bme_ok && bme.performReading()) {
@@ -560,15 +565,16 @@ void read_environment() {
         g_gas.voc_delta = max(0.0f, g_gas.voc_ppb - g_gas.voc_baseline);
     }
 
-    // MAX31865: precision RTD temperature
+    // Temperature: precision RTD if present, else fall back to the BME680.
     if (g_rtd_ok) {
         g_env.temp_rtd = rtd.temperature(RTD_NOMINAL, RTD_REF_RESISTOR);
-        // Check for faults
         uint8_t fault = rtd.readFault();
         if (fault) {
             Serial.printf("[RTD] Fault: 0x%02X\n", fault);
             rtd.clearFault();
         }
+    } else {
+        g_env.temp_rtd = g_env.temperature; // no MAX31865 — use the BME temperature
     }
 
     // Temperature rate of change
