@@ -249,6 +249,28 @@ export function useLatestTelemetry(deviceId: string | null, orgId: string | unde
   return telemetry;
 }
 
+// Per-device runtime config (thresholds etc.) — used to colour the gauges.
+export function useDeviceConfig(deviceId: string | null) {
+  const [config, setConfig] = useState<Record<string, any> | null>(null);
+
+  useEffect(() => {
+    if (!deviceId) { setConfig(null); return; }
+    let cancelled = false;
+    const load = () =>
+      supabase
+        .from("device_config")
+        .select("config")
+        .eq("device_id", deviceId)
+        .maybeSingle()
+        .then(({ data }) => { if (!cancelled) setConfig(((data?.config as Record<string, any>) || null)); });
+    load();
+    const t = setInterval(load, 15000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, [deviceId]);
+
+  return config;
+}
+
 export function useEvents(orgId: string | undefined, limit: number = 50) {
   const [events, setEvents] = useState<EventRow[]>([]);
   const [loading, setLoading] = useState(true);
