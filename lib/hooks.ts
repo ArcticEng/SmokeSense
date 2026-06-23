@@ -176,10 +176,10 @@ export function useTelemetryHistory(deviceId: string | null, hours: number = 24)
       .select("id, device_id, severity, stage, fire_type, fire_label, confidence, action, sensors_active, confirmed, h2_ppm, co_ppm, voc_ppb, vesda_pct, vesda_present, optical_pct, is_smoke, is_smouldering, scatter_delta, ir_blue_ratio, fwd_back_ratio, mq2, temperature, humidity, rssi, recorded_at")
       .eq("device_id", deviceId)
       .gte("recorded_at", since)
-      .order("recorded_at", { ascending: true })
+      .order("recorded_at", { ascending: false })  // newest first…
       .limit(500)
       .then(({ data: rows }) => {
-        if (rows) setData(rows);
+        if (rows) setData(rows.slice().reverse());  // …then flip to chronological for the chart
         setLoading(false);
       });
   }, [deviceId, hours]);

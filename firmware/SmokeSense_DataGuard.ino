@@ -169,6 +169,11 @@ uint32_t g_buffered_count = 0;
 uint32_t g_flushed_count = 0;
 
 void buffer_init() {
+    if (!USE_OFFLINE_BUFFER) {           // offline buffering disabled — don't touch LittleFS
+        g_littlefs_ok = false;
+        Serial.println("[BUFFER] offline buffer disabled");
+        return;
+    }
     g_littlefs_ok = LittleFS.begin(true); // true = format on first use
     if (g_littlefs_ok) {
         if (!LittleFS.exists(BUFFER_DIR)) LittleFS.mkdir(BUFFER_DIR);
@@ -262,6 +267,24 @@ void setup() {
     // I2C bus
     Wire.begin(PIN_SDA, PIN_SCL);
 
+    // ── I2C scanner — prints every device address actually on the bus.
+    //    Use this to prove wiring: BME680/688 = 0x76 or 0x77, ADS1115 = 0x48.
+    {
+        Serial.println("[I2C] Scanning bus (SDA=D21 SCL=D22)...");
+        int found = 0;
+        for (uint8_t a = 1; a < 127; a++) {
+            Wire.beginTransmission(a);
+            if (Wire.endTransmission() == 0) {
+                Serial.printf("[I2C]   device found at 0x%02X\n", a);
+                found++;
+            }
+        }
+        if (found == 0)
+            Serial.println("[I2C]   NOTHING FOUND — check 3V3 power, GND, SDA/SCL, and pull-ups");
+        else
+            Serial.printf("[I2C]   %d device(s) on the bus\n", found);
+    }
+
     // ADS1115 16-bit ADC
     g_ads_ok = ads.begin(ADS1115_ADDR);
     if (g_ads_ok) {
@@ -272,7 +295,7 @@ void setup() {
     }
 
     // BME680 environment sensor
-    g_bme_ok = bme.begin(BME680_ADDR);
+    g_bme_ok = bme.begin(BME680_ADDR) || bme.begin(0x76);  // boards vary: try 0x77 then 0x76
     if (g_bme_ok) {
         bme.setTemperatureOversampling(BME680_OS_8X);
         bme.setHumidityOversampling(BME680_OS_2X);
@@ -328,7 +351,7 @@ void setup() {
     // ADPD4101 optical scatter chamber (optional, shares I2C bus @0x24)
     if (g_cfg.use_adpd) {
         g_adpd_ok = adpd.begin(Wire);
-        Serial.printf("[ADPD4101] %s\n", g_adpd_ok ? "OK @0x24" : "FAILED");
+        Serial.printf("[ADPD4101] %s\n", g_adpd_ok ? "OK @0x29 (TSL2591)" : "FAILED — TSL2591 not detected @0x29");
     } else {
         Serial.println("[ADPD4101] Disabled (USE_ADPD4101=false)");
     }
@@ -553,15 +576,36 @@ void read_environment() {
 
     // BME680: temp + humidity + pressure + VOC gas resistance
     if (g_bme_ok && bme.performReading()) {
-        g_env.temperature = bme.temperature;
+        g_env.temperature = bme.temperature + BME_TEMP_OFFSET; // compensate gas-heater self-heating
         g_env.humidity = bme.humidity;
         g_env.pressure = bme.pressure / 100.0; // Pa to hPa
         g_env.voc_resistance = bme.gas_resistance; // ohms
 
-        // Convert gas resistance to VOC ppb estimate
-        // Higher resistance = cleaner air. Resistance drops with VOCs.
-        float ratio = BME_VOC_BASELINE_KOHM / (g_env.voc_resistance / 1000.0);
-        g_gas.voc_ppb = max(0.0f, (ratio - 1.0f) * 500.0f); // rough linearization
+        // VOC from BME gas resistance, using an ADAPTIVE clean-air baseline.
+        // The MOX element reads low resistance (looks like high VOC) until it
+        // burns in, so: (a) during VOC_WARMUP_MS we force VOC=0, and (b) we
+        // track the cleanest (highest) resistance seen as the clean-air
+        // baseline. VOC then rises only when resistance drops BELOW that —
+        // i.e. when something actually outgasses — instead of off a fixed
+        // 100 kOhm guess that this particular sensor may never sit at.
+        static float voc_base_res = 0;                    // clean-air ref (ohms)
+        float res = g_env.voc_resistance;
+        bool  warming = (millis() - g_boot_time) < VOC_WARMUP_MS;
+        if (res > 1000) {                                 // ignore invalid reads
+            // Slow EMA that tracks BOTH directions (~3 min time constant at a
+            // 2 s poll). This self-heals: a transient resistance spike during
+            // burn-in no longer anchors the baseline forever — clean air drifts
+            // back to ~0 VOC. Real outgassing is faster than the EMA, so it
+            // still shows up as the resistance drops below the baseline.
+            if (voc_base_res == 0) voc_base_res = res;    // seed
+            else                   voc_base_res += (res - voc_base_res) * 0.01f;
+            if (warming) {
+                g_gas.voc_ppb = 0;                        // not trustworthy yet
+            } else {
+                float ratio = voc_base_res / res;         // >1 when dirtier than baseline
+                g_gas.voc_ppb = max(0.0f, (ratio - 1.0f) * 500.0f);
+            }
+        }
         g_gas.voc_delta = max(0.0f, g_gas.voc_ppb - g_gas.voc_baseline);
     }
 
@@ -906,8 +950,18 @@ void loop() {
 
         // ADPD4101 optical chamber update (smoke + particle classification)
         if (g_cfg.use_adpd) {
-            adpd.update();
-            g_adpd_ok = adpd.isConnected();
+            if (g_adpd_ok) {
+                adpd.update();
+                g_adpd_ok = adpd.isConnected();
+            } else {
+                // Sensor not present yet — retry init every 3 s so a TSL2591
+                // plugged in while running comes online without a reflash.
+                static unsigned long last_try = 0;
+                if (millis() - last_try > 3000) {
+                    last_try = millis();
+                    g_adpd_ok = adpd.begin(Wire);
+                }
+            }
         }
 
         // ── Smoke source resolution ────────────────────────

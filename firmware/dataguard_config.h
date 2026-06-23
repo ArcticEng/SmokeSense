@@ -12,7 +12,7 @@
 #define DG_FIRMWARE_VERSION  "1.2.0"
 
 // ─── WIFI ────────────────────────────────────────
-#define WIFI_SSID           "5G-unit116-dockroad-ftta"
+#define WIFI_SSID           "2.4g-unit116-dockroad-ftta"
 #define WIFI_PASS           "swifthamster79"
 #define WIFI_CONNECT_TIMEOUT 15000
 #define AP_PASS              "dataguard2026"
@@ -122,18 +122,18 @@
 // Conversion: ppm = (WE_mV - AE_mV - offset) * sensitivity
 // These values are from the ISB calibration certificate
 // UPDATE THESE from your specific ISB calibration data
-#define H2_ISB_SENSITIVITY   1.8    // nA/ppm (from H2-AF datasheet, varies per unit)
+#define H2_ISB_SENSITIVITY   1.8f   // nA/ppm (from H2-AF datasheet, varies per unit)
 #define H2_ISB_WE_ZERO_MV    230.0  // WE voltage at zero gas (from ISB cal cert)
-#define CO_ISB_SENSITIVITY   3.5    // nA/ppm (from CO-AF datasheet)
+#define CO_ISB_SENSITIVITY   3.5f   // nA/ppm (from CO-AF datasheet)
 #define CO_ISB_WE_ZERO_MV    350.0  // WE voltage at zero gas
 
 // Set false if NO gas sensors are fitted (neither Alphasense nor MQ-7/MQ-8).
 // Forces H2/CO to zero so unconnected/floating ADS inputs can't produce false
 // gas readings — the classifier then simply runs without the gas channels.
-#define GAS_PRESENT          true
+#define GAS_PRESENT          false  // no ADS1115 / MQ-7 / MQ-8 fitted — H2/CO forced to zero
 
 // For MQ hobby sensor fallback (if using MQ-8/MQ-7 on ADS1115):
-#define USE_MQ_FALLBACK      true   // set true if using MQ sensors instead of Alphasense
+#define USE_MQ_FALLBACK      false  // no MQ sensors fitted
 #define MQ_H2_SCALE          0.5    // ADC_voltage * scale = approx ppm
 #define MQ_CO_SCALE           0.25
 
@@ -142,6 +142,19 @@
 // Clean air baseline: ~50-200 kOhm
 // VOC present: drops to 5-50 kOhm
 #define BME_VOC_BASELINE_KOHM 100.0
+
+// MOX gas (VOC) sensor warm-up. The BME680/688 hot-plate reads artificially
+// LOW resistance (= fake HIGH VOC) on cold start and needs to burn in. During
+// this window VOC is forced to 0 and the clean-air baseline is seeded, so the
+// classifier doesn't false-alarm an "Electrical fault" at boot.
+#define VOC_WARMUP_MS         180000   // 3 minutes
+
+// BME680/688 temperature offset (°C). The gas hot-plate self-heats the die so
+// the reported temp reads several degrees high — worse when the board sits
+// near the ESP32. Calibrate: compare the dashboard temp to a reference
+// thermometer in the same air, then set this to (reference - reported).
+// e.g. dashboard 32.5, room 25.0  ->  set to -7.5
+#define BME_TEMP_OFFSET       0.0f
 
 // Default baselines
 #define H2_BASELINE_DEFAULT  5.0
@@ -189,7 +202,12 @@
 //  When enabled, becomes the primary smoke + particle source
 //  and feeds the classifier like the PMS5003 does.
 // ═══════════════════════════════════════════════════
-#define USE_ADPD4101         false // set true once chamber wired + Wavetool config loaded
+#define USE_ADPD4101         true  // TSL2591 chamber: pulses IR(D32)+blue(D33) LEDs, reads scatter @0x29
+
+// Offline telemetry buffer (LittleFS). Keep false unless you need the device to
+// store readings to flash while MQTT is down — a corrupt flash FS crashes the
+// writer (lfs_alloc divide-by-zero). The device is fine online without it.
+#define USE_OFFLINE_BUFFER   false
 #define ADPD4101_ADDR        0x24
 
 // ═══════════════════════════════════════════════════

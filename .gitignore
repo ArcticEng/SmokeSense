@@ -9,3 +9,9 @@ dist/
 .DS_Store
 .investor_assets/
 .investor_assets/
+.pio/
+.pio-smokesense/
+firmware/.pio/
+firmware/.pio-smokesense/
+firmware.zip
+*.zip

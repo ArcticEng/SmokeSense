@@ -34,7 +34,7 @@ ALTER TABLE telemetry
   ADD COLUMN IF NOT EXISTS temp_score       real,
   ADD COLUMN IF NOT EXISTS vesda_score      real,
   ADD COLUMN IF NOT EXISTS action_label     text,
-  ADD COLUMN IF NOT EXISTS sensors_agreeing smallint,
+  ADD COLUMN IF NOT EXISTS sensors_agreeing boolean,  -- firmware sends bool (2+ sensors correlate)
   ADD COLUMN IF NOT EXISTS sustained_ms     int,
   -- particle detail
   ADD COLUMN IF NOT EXISTS pm1_0              real,

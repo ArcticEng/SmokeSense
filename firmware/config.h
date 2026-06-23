@@ -10,7 +10,7 @@
 #pragma once
 
 // ─── WIFI ────────────────────────────────────────
-#define WIFI_SSID           "5G-unit116-dockroad-ftta"
+#define WIFI_SSID           "2.4g-unit116-dockroad-ftta"
 #define WIFI_PASS           "swifthamster79"
 #define WIFI_CONNECT_TIMEOUT 15000
 

@@ -93,7 +93,9 @@ public:
 
         uint8_t id = readReg(TSL2591_R_ID);
         if (id != 0x50) {
-            Serial.printf("[CHAMBER] TSL2591 ID 0x%02X (expected 0x50) — check wiring/addr\n", id);
+            Serial.printf("[CHAMBER] TSL2591 ID 0x%02X (expected 0x50) — not responding, check VIN/GND/SDA(D21)/SCL(D22) @0x29\n", id);
+            data.valid = false;
+            return false;   // honest failure: don't report a chamber that isn't there
         }
         writeReg(TSL2591_R_CONFIG, TSL2591_GAIN_MED | TSL2591_INT_100);
         writeReg(TSL2591_R_ENABLE, TSL2591_EN_PON | TSL2591_EN_AEN);
