@@ -13,3 +13,48 @@
 }
 
 .animate-alarm { animation: pulse-alarm 1s infinite; }
+
+/* ── Theme tokens ── */
+:root { --gauge-track: #2a3340; }
+:root.light { --gauge-track: #d6dbe2; }
+
+body { transition: background-color 0.15s ease, color 0.15s ease; }
+
+/* ── Light mode: re-skin the dark utility classes when html.light ── */
+:root.light body { background: #f4f6f8 !important; color: #1b2733 !important; }
+
+.light .bg-gray-950 { background: #f4f6f8 !important; }
+.light .bg-gray-900,
+.light .bg-gray-900\/60,
+.light .bg-gray-900\/50,
+.light .bg-gray-900\/40,
+.light .bg-gray-900\/30 { background: #ffffff !important; }
+.light .bg-gray-800,
+.light .bg-gray-800\/60,
+.light .bg-gray-800\/50,
+.light .bg-gray-800\/30 { background: #eceef2 !important; }
+.light .bg-gray-700 { background: #e0e4ea !important; }
+
+.light .border-gray-800,
+.light .border-gray-800\/70,
+.light .border-gray-800\/50,
+.light .border-gray-800\/30 { border-color: #e2e6eb !important; }
+.light .border-gray-700 { border-color: #d3d9e0 !important; }
+.light .border-gray-600 { border-color: #c4ccd4 !important; }
+
+.light .text-gray-100 { color: #1b2733 !important; }
+.light .text-gray-300 { color: #2b3845 !important; }
+.light .text-gray-400 { color: #475463 !important; }
+.light .text-gray-500 { color: #6a7480 !important; }
+.light .text-gray-600 { color: #8a939d !important; }
+
+.light .hover\:bg-gray-800:hover { background: #e6e9ee !important; }
+.light .hover\:bg-gray-800\/30:hover { background: #eef1f4 !important; }
+.light .hover\:text-gray-300:hover { color: #1b2733 !important; }
+
+/* sticky push-bar gradient (admin) reads dark by default */
+.light .from-black\/90 {
+  --tw-gradient-from: rgba(244, 246, 248, 0.92) var(--tw-gradient-from-position) !important;
+  --tw-gradient-to: rgba(244, 246, 248, 0) var(--tw-gradient-to-position) !important;
+  --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to) !important;
+}

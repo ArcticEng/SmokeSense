@@ -6,6 +6,26 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { XAxis, YAxis, ResponsiveContainer, Tooltip, Area, AreaChart } from "recharts";
 
+function ThemeToggle() {
+  const [light, setLight] = useState(false);
+  useEffect(() => {
+    const isLight = typeof window !== "undefined" && localStorage.getItem("theme") === "light";
+    setLight(isLight);
+    document.documentElement.classList.toggle("light", isLight);
+  }, []);
+  function toggle() {
+    const next = !light;
+    setLight(next);
+    document.documentElement.classList.toggle("light", next);
+    localStorage.setItem("theme", next ? "light" : "dark");
+  }
+  return (
+    <button onClick={toggle} className="text-gray-500 hover:text-gray-300 text-xs" title="Toggle light / dark">
+      {light ? "Dark mode" : "Light mode"}
+    </button>
+  );
+}
+
 export default function DashboardPage() {
   const { user, signOut, loading: authLoading } = useAuth();
   const { org, loading: orgLoading } = useOrganization();
@@ -68,6 +88,7 @@ export default function DashboardPage() {
           {warningCount > 0 && (
             <span className="px-2.5 py-1 bg-amber-950 text-amber-400 border border-amber-900 rounded-md text-xs font-medium">{warningCount} warning{warningCount > 1 ? "s" : ""}</span>
           )}
+          <ThemeToggle />
           <button onClick={signOut} className="text-gray-500 hover:text-gray-300 text-xs">Sign out</button>
         </div>
       </header>
@@ -168,9 +189,10 @@ function StageBar({ severity }: { severity: number }) {
 // ═══════════════════════════════════════════════════
 
 function Gauge({ label, value, unit, lo, hi, max }: { label: string; value: number; unit?: string; lo: number; hi: number; max: number }) {
+  const GREEN = "#10d96a", AMBER = "#ffae00", RED = "#ff3b4e";
   const v = Math.max(0, value || 0);
   const frac = Math.min(v / max, 1);
-  const band = v >= hi ? "#ef4444" : v >= lo ? "#f59e0b" : "#22c55e";
+  const band = v >= hi ? RED : v >= lo ? AMBER : GREEN;
   const cx = 60, cy = 54, r = 44;
   const pol = (f: number, rr = r) => { const a = Math.PI * (1 - Math.min(Math.max(f, 0), 1)); return [cx + rr * Math.cos(a), cy - rr * Math.sin(a)]; };
   const arc = (f0: number, f1: number) => { const [x0, y0] = pol(f0); const [x1, y1] = pol(f1); return `M${x0.toFixed(1)} ${y0.toFixed(1)} A ${r} ${r} 0 0 1 ${x1.toFixed(1)} ${y1.toFixed(1)}`; };
@@ -181,12 +203,12 @@ function Gauge({ label, value, unit, lo, hi, max }: { label: string; value: numb
     <div className="bg-gray-900/40 rounded-xl px-3 py-2.5 border border-gray-800/50">
       <div className="text-[11px] text-gray-500 mb-1 truncate">{label}</div>
       <svg viewBox="0 0 120 62" className="w-full">
-        <path d={arc(0, 1)} fill="none" stroke="#2a2f3a" strokeWidth="8" strokeLinecap="round" />
-        <path d={arc(0, loF)} fill="none" stroke="#22c55e" strokeWidth="8" opacity="0.45" />
-        <path d={arc(loF, hiF)} fill="none" stroke="#f59e0b" strokeWidth="8" opacity="0.45" />
-        <path d={arc(hiF, 1)} fill="none" stroke="#ef4444" strokeWidth="8" opacity="0.45" />
-        <line x1={cx} y1={cy} x2={nx.toFixed(1)} y2={ny.toFixed(1)} stroke={band} strokeWidth="2.5" strokeLinecap="round" />
-        <circle cx={cx} cy={cy} r="3.5" fill={band} />
+        <path d={arc(0, 1)} fill="none" stroke="var(--gauge-track)" strokeWidth="9" strokeLinecap="round" />
+        <path d={arc(0, loF)} fill="none" stroke={GREEN} strokeWidth="9" strokeLinecap="round" />
+        <path d={arc(loF, hiF)} fill="none" stroke={AMBER} strokeWidth="9" />
+        <path d={arc(hiF, 1)} fill="none" stroke={RED} strokeWidth="9" strokeLinecap="round" />
+        <line x1={cx} y1={cy} x2={nx.toFixed(1)} y2={ny.toFixed(1)} stroke={band} strokeWidth="3" strokeLinecap="round" />
+        <circle cx={cx} cy={cy} r="4" fill={band} />
       </svg>
       <div className="text-center -mt-1">
         <span className="text-lg font-semibold tabular-nums" style={{ color: band }}>{display}</span>

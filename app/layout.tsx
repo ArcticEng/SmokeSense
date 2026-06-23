@@ -9,6 +9,13 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className="dark">
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: "try{if(localStorage.getItem('theme')==='light')document.documentElement.classList.add('light')}catch(e){}",
+          }}
+        />
+      </head>
       <body className="bg-gray-950 text-gray-100 antialiased">
         {children}
       </body>
