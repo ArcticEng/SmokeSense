@@ -41,6 +41,14 @@ export default function DashboardPage() {
     fetch("/api/admin/me").then((r) => r.json()).then((j) => setIsAdmin(!!j.is_superadmin)).catch(() => {});
   }, []);
 
+  // Re-render every 20 s so "offline" and "last seen" stay current even when a
+  // device goes silent (no incoming event would otherwise trigger a re-render).
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setTick((n) => n + 1), 20000);
+    return () => clearInterval(t);
+  }, []);
+
   if (!authLoading && !user) {
     router.replace("/login");
     return null;
@@ -52,14 +60,16 @@ export default function DashboardPage() {
     switch (filter) {
       case "alarm": return devices.filter((d) => d.last_severity >= 3);
       case "warning": return devices.filter((d) => d.last_severity >= 1 && d.last_severity < 3);
-      case "offline": return devices.filter((d) => !d.is_online);
+      case "offline": return devices.filter((d) => isDeviceOffline(d));
       default: return devices;
     }
   }, [devices, filter]);
 
-  const alarmCount = devices.filter((d) => d.last_severity >= 3).length;
-  const warningCount = devices.filter((d) => d.last_severity >= 1 && d.last_severity < 3).length;
-  const onlineCount = devices.filter((d) => d.is_online).length;
+  // Treat a silent device as not in alarm/warning — its severity is stale.
+  const alarmCount = devices.filter((d) => !isDeviceOffline(d) && d.last_severity >= 3).length;
+  const warningCount = devices.filter((d) => !isDeviceOffline(d) && d.last_severity >= 1 && d.last_severity < 3).length;
+  const onlineCount = devices.filter((d) => !isDeviceOffline(d)).length;
+  const offlineCount = devices.filter((d) => isDeviceOffline(d)).length;
 
   if (authLoading || orgLoading) {
     return (
@@ -87,6 +97,11 @@ export default function DashboardPage() {
           )}
           {warningCount > 0 && (
             <span className="px-2.5 py-1 bg-amber-950 text-amber-400 border border-amber-900 rounded-md text-xs font-medium">{warningCount} warning{warningCount > 1 ? "s" : ""}</span>
+          )}
+          {offlineCount > 0 && (
+            <span className="px-2.5 py-1 bg-gray-800 text-gray-300 border border-gray-600 rounded-md text-xs font-medium inline-flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-gray-400" />{offlineCount} offline
+            </span>
           )}
           <ThemeToggle />
           <button onClick={signOut} className="text-gray-500 hover:text-gray-300 text-xs">Sign out</button>
@@ -146,29 +161,59 @@ export default function DashboardPage() {
 }
 
 // ═══════════════════════════════════════════════════
+//  OFFLINE / STALENESS HELPERS
+// ═══════════════════════════════════════════════════
+// A device is "offline" if it hasn't reported in OFFLINE_AFTER_S seconds.
+// Derived from last_seen (robust) rather than the is_online flag alone.
+const OFFLINE_AFTER_S = 120; // ~2 min of silence (telemetry is every ~2 s)
+
+function agoSeconds(d: Device): number | null {
+  return d.last_seen ? Math.round((Date.now() - new Date(d.last_seen).getTime()) / 1000) : null;
+}
+function isDeviceOffline(d: Device): boolean {
+  const a = agoSeconds(d);
+  return a === null || a > OFFLINE_AFTER_S;
+}
+function fmtDuration(sec: number): string {
+  if (sec < 60) return `${sec}s`;
+  if (sec < 3600) return `${Math.round(sec / 60)}m`;
+  if (sec < 86400) return `${Math.round(sec / 3600)}h`;
+  return `${Math.round(sec / 86400)}d`;
+}
+
+// ═══════════════════════════════════════════════════
 //  DEVICE CARD
 // ═══════════════════════════════════════════════════
 
 function DeviceCard({ device, selected, onClick }: { device: Device; selected: boolean; onClick: () => void }) {
   const s = STAGE_META[Math.min(device.last_severity, 4)];
-  const ago = device.last_seen ? Math.round((Date.now() - new Date(device.last_seen).getTime()) / 1000) : null;
+  const ago = agoSeconds(device);
+  const offline = isDeviceOffline(device);
   const isDataGuard = device.device_id.startsWith("DG-");
 
   return (
     <button onClick={onClick}
-      className={`w-full text-left p-3.5 rounded-xl border transition ${selected ? "bg-gray-800/60 border-gray-600" : "bg-gray-900/40 border-gray-800/50 hover:bg-gray-800/30"}`}>
+      className={`w-full text-left p-3.5 rounded-xl border transition ${selected ? "bg-gray-800/60 border-gray-600" : "bg-gray-900/40 border-gray-800/50 hover:bg-gray-800/30"} ${offline ? "opacity-60" : ""}`}>
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
-          <div className={`w-2 h-2 rounded-full ${device.last_severity >= 3 ? "animate-alarm" : ""}`} style={{ background: device.is_online ? s.color : "#555" }} />
-          <span className="text-sm font-medium">{device.name}</span>
+          <div className={`w-2 h-2 rounded-full ${!offline && device.last_severity >= 3 ? "animate-alarm" : ""}`} style={{ background: offline ? "#6b7280" : s.color }} />
+          <span className={`text-sm font-medium ${offline ? "text-gray-400" : ""}`}>{device.name}</span>
           {isDataGuard && <span className="text-[9px] px-1.5 py-0.5 rounded bg-teal-950 text-teal-400 border border-teal-900">DG</span>}
         </div>
-        <span className="text-[11px] px-2 py-0.5 rounded-md font-medium stage-fill" style={{ ["--sev" as any]: s.color, background: s.bg, color: s.color, border: `1px solid ${s.border}` }}>{s.label}</span>
+        {offline ? (
+          <span className="text-[11px] px-2 py-0.5 rounded-md font-semibold bg-gray-700/60 text-gray-300 border border-gray-600 inline-flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-gray-400" /> Offline
+          </span>
+        ) : (
+          <span className="text-[11px] px-2 py-0.5 rounded-md font-medium stage-fill" style={{ ["--sev" as any]: s.color, background: s.bg, color: s.color, border: `1px solid ${s.border}` }}>{s.label}</span>
+        )}
       </div>
-      <div className="text-[11px] text-gray-500 mb-2">
-        {device.zone || "—"} {ago !== null ? `· ${ago < 60 ? `${ago}s` : `${Math.round(ago / 60)}m`} ago` : ""}
+      <div className={`text-[11px] mb-2 ${offline ? "text-amber-500 font-medium" : "text-gray-500"}`}>
+        {offline
+          ? `⚠ No signal · last seen ${ago !== null ? fmtDuration(ago) + " ago" : "unknown"}`
+          : `${device.zone || "—"} ${ago !== null ? `· ${fmtDuration(ago)} ago` : ""}`}
       </div>
-      <StageBar severity={device.last_severity} />
+      {offline ? <div className="h-1.5 rounded-sm bg-gray-700/40" /> : <StageBar severity={device.last_severity} />}
     </button>
   );
 }
@@ -297,6 +342,18 @@ function DeviceDetail({ device, orgId, userId, onBack }: { device: Device; orgId
           <p className="text-xs text-gray-500">{device.device_id} — {device.zone || "Unassigned"}{isDataGuard && <span className="ml-2 text-teal-500 font-medium">DataGuard</span>}</p>
         </div>
       </div>
+
+      {isDeviceOffline(device) && (
+        <div className="rounded-xl p-4 mb-4 border border-gray-600 bg-gray-800/70 flex items-center gap-3">
+          <span className="w-2.5 h-2.5 rounded-full bg-gray-400 flex-shrink-0" />
+          <div>
+            <div className="text-sm font-semibold text-gray-200">Device offline — no signal</div>
+            <div className="text-[11px] text-amber-500 mt-0.5">
+              Last reported {agoSeconds(device) !== null ? fmtDuration(agoSeconds(device)!) + " ago" : "unknown"}. Readings below are the last known values and may be stale.
+            </div>
+          </div>
+        </div>
+      )}
 
       {isDataGuard ? (
         <>
