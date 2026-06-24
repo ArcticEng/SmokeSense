@@ -557,6 +557,21 @@ void read_gas_sensors() {
         g_gas.h2_we_mv = 0; g_gas.co_we_mv = 0;
     }
 
+    // ── MQ gas warm-up + auto-zero ──────────────────────────────────
+    // During heater warm-up the MQ-7/MQ-8 read falsely high: follow the
+    // falling curve, report no gas. Afterwards the baseline self-zeros
+    // DOWNWARD only (tracks settling/clean air) but holds against upward
+    // excursions, so a genuine H2/CO rise still produces a positive delta.
+    if (millis() - g_boot_time < GAS_WARMUP_MS) {
+        g_gas.h2_baseline = g_gas.h2_ppm;  g_gas.co_baseline = g_gas.co_ppm;
+        g_gas.h2_delta = 0; g_gas.co_delta = 0;
+        g_gas.h2_rate  = 0; g_gas.co_rate  = 0;
+        g_gas.last_rate_calc = millis();
+        return;
+    }
+    if (g_gas.h2_ppm < g_gas.h2_baseline) g_gas.h2_baseline += (g_gas.h2_ppm - g_gas.h2_baseline) * 0.02f;
+    if (g_gas.co_ppm < g_gas.co_baseline) g_gas.co_baseline += (g_gas.co_ppm - g_gas.co_baseline) * 0.02f;
+
     // Deltas
     g_gas.h2_delta = max(0.0f, g_gas.h2_ppm - g_gas.h2_baseline);
     g_gas.co_delta = max(0.0f, g_gas.co_ppm - g_gas.co_baseline);

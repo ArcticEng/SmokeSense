@@ -156,6 +156,12 @@
 // e.g. dashboard 32.5, room 25.0  ->  set to -7.5
 #define BME_TEMP_OFFSET       0.0f
 
+// MQ-7/MQ-8 heater warm-up. The heaters read falsely high until warm, so for
+// this window gas is forced to zero and the clean-air baseline is seeded.
+// After it, the baseline auto-zeros DOWNWARD only (tracks settling/clean air)
+// but holds against upward excursions, so a real H2/CO rise is still detected.
+#define GAS_WARMUP_MS         180000   // 3 minutes
+
 // Default baselines
 #define H2_BASELINE_DEFAULT  5.0
 #define CO_BASELINE_DEFAULT  2.0
