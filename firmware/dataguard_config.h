@@ -130,10 +130,10 @@
 // Set false if NO gas sensors are fitted (neither Alphasense nor MQ-7/MQ-8).
 // Forces H2/CO to zero so unconnected/floating ADS inputs can't produce false
 // gas readings — the classifier then simply runs without the gas channels.
-#define GAS_PRESENT          false  // no ADS1115 / MQ-7 / MQ-8 fitted — H2/CO forced to zero
+#define GAS_PRESENT          true   // ADS1115 + MQ-7/MQ-8 fitted
 
 // For MQ hobby sensor fallback (if using MQ-8/MQ-7 on ADS1115):
-#define USE_MQ_FALLBACK      false  // no MQ sensors fitted
+#define USE_MQ_FALLBACK      true   // using MQ-7 (CO) + MQ-8 (H2) on the ADS1115
 #define MQ_H2_SCALE          0.5    // ADC_voltage * scale = approx ppm
 #define MQ_CO_SCALE           0.25
 
