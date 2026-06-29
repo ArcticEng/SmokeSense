@@ -4,7 +4,7 @@ import { useAuth, useOrganization, useDevices, useLatestTelemetry, useEvents, us
 import { STAGE_META, Device, EventRow, TelemetryRow } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { XAxis, YAxis, ResponsiveContainer, Tooltip, Area, AreaChart } from "recharts";
+import { XAxis, YAxis, ResponsiveContainer, Tooltip, Area, AreaChart, ComposedChart, Line } from "recharts";
 
 function ThemeToggle() {
   const [light, setLight] = useState(false);
@@ -90,7 +90,7 @@ export default function DashboardPage() {
           {isAdmin && (
             <Link href="/dashboard/admin" className="text-amber-400 hover:text-amber-300 text-xs font-medium">Admin</Link>
           )}
-          <Link href="/dashboard/fleet" className="text-teal-400 hover:text-teal-300 text-xs font-medium">Fleet Map</Link>
+          {/* Fleet Map hidden — demo/mock data. Re-add the Link to restore. */}
           <span className="text-gray-500"><span className="text-green-400 font-medium">{onlineCount}</span>/{devices.length} online</span>
           {alarmCount > 0 && (
             <span className="px-2.5 py-1 bg-red-950 text-red-400 border border-red-900 rounded-md text-xs font-medium animate-alarm">{alarmCount} alarm{alarmCount > 1 ? "s" : ""}</span>
@@ -289,6 +289,8 @@ function DeviceDetail({ device, orgId, userId, onBack }: { device: Device; orgId
   const chartData = history.map((t) => ({
     time: new Date(t.recorded_at).toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit" }),
     delta: Math.round(t.scatter_delta), temp: t.temperature, humidity: t.humidity,
+    ratio: Number((t.ir_blue_ratio ?? 0).toFixed(2)),
+    t2: new Date(t.recorded_at).toLocaleTimeString("en-ZA", { minute: "2-digit", second: "2-digit" }),
   }));
 
   const vesdaPresent = telemetry?.vesda_present !== false;
@@ -427,6 +429,32 @@ function DeviceDetail({ device, orgId, userId, onBack }: { device: Device; orgId
                     <Stat label="Scatter delta" value={Math.round(telemetry?.scatter_delta || 0)} />
                     <Stat label="Blue / IR" value={(telemetry?.ir_blue_ratio || 0).toFixed(2)} color={(telemetry?.ir_blue_ratio || 0) > 1.6 ? "#ef4444" : "#22c55e"} />
                     <Stat label="Fwd / Back" value={(telemetry?.fwd_back_ratio || 0).toFixed(2)} />
+                  </div>
+                  {/* Live scatter-vs-time — smoke spikes the scatter signal (M2 demo) */}
+                  <div className="bg-gray-900/50 rounded-xl p-3 border border-gray-800/50 mt-2">
+                    <div className="flex items-center justify-between mb-1">
+                      <p className="text-[11px] text-gray-500">Optical scatter — live (smoke raises the signal)</p>
+                      <div className="flex items-center gap-3 text-[10px]">
+                        <span className="flex items-center gap-1 text-teal-400"><span className="w-2.5 h-1.5 rounded-sm bg-teal-500 inline-block" />scatter</span>
+                        <span className="flex items-center gap-1 text-amber-500"><span className="w-2.5 h-0.5 bg-amber-500 inline-block" />Blue/IR</span>
+                      </div>
+                    </div>
+                    <ResponsiveContainer width="100%" height={140}>
+                      <ComposedChart data={chartData}>
+                        <defs>
+                          <linearGradient id="gScatter" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor="#0d9488" stopOpacity={0.35} />
+                            <stop offset="100%" stopColor="#0d9488" stopOpacity={0} />
+                          </linearGradient>
+                        </defs>
+                        <XAxis dataKey="t2" tick={{ fontSize: 10, fill: "#555" }} tickLine={false} axisLine={false} interval="preserveStartEnd" minTickGap={36} />
+                        <YAxis yAxisId="scatter" tick={{ fontSize: 10, fill: "#555" }} tickLine={false} axisLine={false} width={30} allowDecimals={false} />
+                        <YAxis yAxisId="ratio" orientation="right" domain={[0, 2]} tick={{ fontSize: 10, fill: "#a16207" }} tickLine={false} axisLine={false} width={26} />
+                        <Tooltip contentStyle={{ background: "#1c1e26", border: "1px solid #333", borderRadius: 8, fontSize: 12 }} labelStyle={{ color: "#888" }} />
+                        <Area yAxisId="scatter" type="monotone" dataKey="delta" name="scatter" stroke="#0d9488" fill="url(#gScatter)" strokeWidth={1.5} dot={false} isAnimationActive={false} />
+                        <Line yAxisId="ratio" type="monotone" dataKey="ratio" name="Blue/IR" stroke="#f59e0b" strokeWidth={1.5} dot={false} isAnimationActive={false} />
+                      </ComposedChart>
+                    </ResponsiveContainer>
                   </div>
                 </div>
               )}
