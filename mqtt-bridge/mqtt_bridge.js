@@ -39,6 +39,11 @@ const CONFIG = {
   topicPrefix: process.env.MQTT_TOPIC_PREFIX || "smokesense",
   port: parseInt(process.env.PORT || "3500"),
   logLevel: process.env.LOG_LEVEL || "info",
+  // Server-side Supabase Realtime broadcast. OFF by default: the realtime-js
+  // client has a stack-overflow bug on websocket churn that crashes the whole
+  // process, and the dashboard already updates via DB polling + postgres_changes.
+  // Set REALTIME_BROADCAST=true only if you specifically need instant push.
+  realtimeBroadcast: process.env.REALTIME_BROADCAST === "true",
 };
 
 // ── Validate ────────────────────────────────────────
@@ -56,6 +61,18 @@ if (!CONFIG.mqttUrl) {
 // ── Supabase client (service role — bypasses RLS) ───
 const supabase = createClient(CONFIG.supabaseUrl, CONFIG.supabaseKey, {
   auth: { persistSession: false },
+});
+
+// ── Crash guards ────────────────────────────────────
+// A fault in a non-critical subsystem — especially the Supabase Realtime
+// client, which can throw an uncatchable stack-overflow from its own async
+// callbacks on websocket churn — must NEVER take down the MQTT→database bridge.
+// Log it and stay up; the core telemetry path keeps running.
+process.on("uncaughtException", (err) => {
+  try { log("error", "uncaughtException (ignored, bridge staying up):", err?.message || err); } catch (_) {}
+});
+process.on("unhandledRejection", (reason) => {
+  try { log("error", "unhandledRejection (ignored, bridge staying up):", reason?.message || reason); } catch (_) {}
 });
 
 // ── State ───────────────────────────────────────────
@@ -509,7 +526,7 @@ function getRealtimeChannel(orgId) {
 }
 
 async function broadcastRealtime(orgId, deviceId, type, payload) {
-  if (!orgId) return;
+  if (!CONFIG.realtimeBroadcast || !orgId) return;   // off by default — see CONFIG note
   // Broadcast on org-scoped channel so only that org's dashboards receive it
   try {
     const channel = getRealtimeChannel(orgId);
